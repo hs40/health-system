@@ -84,10 +84,11 @@ def _ensure_previous_day_activities(
     return True
 
 
-def run_daily(
-    session: Session, day: dt.date, settings: Settings
-) -> tuple[GarminSyncResult, DailyReport]:
-    """执行单日端到端流水线。"""
+def sync_daily(session: Session, day: dt.date, settings: Settings) -> GarminSyncResult:
+    """同步 + 标准化 + 入库（**不生成日报**）。
+
+    拆出以便调度器在「睡眠未结束」时只同步、把日报/计划/推送延后。
+    """
     adapter = GarminAdapter(settings)
     sync = adapter.sync_day(day)
     # 日报「昨日训练回顾」依赖 day-1 的 raw activities；ACWR 图依赖 day-1 的
@@ -112,6 +113,25 @@ def run_daily(
 
     sd = adapter.standardize(day)
     upsert_standard(session, sd)
+    return sync
 
-    report = generate_daily(session, day, settings, sync_errors=sync.errors)
+
+def generate_report(
+    session: Session,
+    day: dt.date,
+    settings: Settings,
+    *,
+    sync_errors: dict[str, str] | None = None,
+) -> DailyReport:
+    """生成并落库日报（供调度器在睡眠完整/到 12:00 时调用）。"""
+    return generate_daily(session, day, settings, sync_errors=sync_errors)
+
+
+def run_daily(
+    session: Session, day: dt.date, settings: Settings
+) -> tuple[GarminSyncResult, DailyReport]:
+    """执行单日端到端流水线（手动同步/运维端点使用，**始终生成日报**）。"""
+    sync = sync_daily(session, day, settings)
+    report = generate_report(session, day, settings, sync_errors=sync.errors)
     return sync, report
+

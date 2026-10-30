@@ -264,16 +264,29 @@ def test_run_daily_job_pushes_to_dingtalk(monkeypatch):
     import app.services.coach_service as cs
     import app.services.daily_pipeline as dp
     from app.orchestrator import scheduler
+    from app.schemas.domain import StandardDaily
 
     class _Sync:
         status = "success"
+        errors: dict = {}
 
     class _Rep:
         risk = None
 
     monkeypatch.setattr(scheduler, "get_settings", lambda: _settings(dingtalk_webhook="https://x"))
     monkeypatch.setattr(scheduler, "session_scope", lambda: contextlib.nullcontext(object()))
-    monkeypatch.setattr(dp, "run_daily", lambda s, d, st: (_Sync(), _Rep()))
+    # 睡眠完整（有入睡、有起床）→ 不触发「睡眠未结束」延迟门控
+    monkeypatch.setattr(scheduler, "_sync_daily", lambda s, d, st: _Sync())
+    monkeypatch.setattr(
+        scheduler,
+        "_get_standard",
+        lambda s, d: StandardDaily(
+            date=d,
+            sleep_start_ts=dt.datetime.combine(d, dt.time(0, 30)),
+            sleep_end_ts=dt.datetime.combine(d, dt.time(7, 0)),
+        ),
+    )
+    monkeypatch.setattr(dp, "generate_report", lambda s, d, st, sync_errors=None: _Rep())
     monkeypatch.setattr(cs, "analyze_daily", lambda s, d, st: {"summary": "ok"})
     monkeypatch.setattr(cs, "build_today_plan", lambda s, d, st: None)
     pushed: dict = {}

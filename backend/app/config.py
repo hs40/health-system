@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     weekly_job_cron: str = "0 9 * * 1"
     monthly_job_cron: str = "0 9 1 * *"
 
+    # —— 睡眠未结束的重试（2026-10-30）——
+    # 07:30 若「有入睡、无起床」，每小时重试；12:00 为兜底（到点强制生成日报）。
+    sleep_retry_cron: str = "30 8-11 * * *"  # 08:30 / 09:30 / 10:30 / 11:30
+    sleep_deadline_cron: str = "0 12 * * *"  # 12:00 兜底
+    sleep_deadline_hour: int = 12
+
     # —— 钉钉群机器人（日报推送，2026-10-26）——
     # webhook 为空 = 功能禁用（前端按钮显示但禁用；定时任务跳过推送）。
     dingtalk_webhook: str = ""
