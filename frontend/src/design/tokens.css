@@ -1,0 +1,69 @@
+/**
+ * 设计 token。
+ *
+ * 最终版主题：**C1 舒展仪表盘**（密度 = comfortable，结构 = grid）。
+ * 四套候选方案（A1/A2/C1/C2）已在 2026-10-23 选定 C1，其余三套定义与
+ * 运行时切换机制（data-density / data-layout）已删除，数值直接固化在 :root。
+ *
+ * 所有颜色/间距/字号只在这里定义，组件不允许写死十六进制色值。
+ */
+
+:root {
+  /* —— 中性色（浅底阅读型报告）—— */
+  --hs-bg: #f6f7f9;
+  --hs-surface: #ffffff;
+  --hs-surface-2: #fbfcfd;
+  --hs-border: #e3e7ec;
+  --hs-border-strong: #cdd4dc;
+  --hs-ink: #10151c;
+  --hs-ink-2: #3d4652;
+  /* 正文次级/三级文字：对比度 ≥4.5:1（白底），11px 小字也可读 */
+  --hs-ink-3: #5b6673;
+  --hs-ink-4: #6a7482;
+
+  /* —— 强调色（运动表现感的克制冷蓝）—— */
+  --hs-accent: #1f5eff;
+  --hs-accent-soft: #eaf0ff;
+  --hs-accent-ink: #143f9e;
+
+  /* —— 交通灯风险色（P1–P4 全站统一）—— */
+  --hs-p1: #c0271f;
+  --hs-p1-soft: #fdeceb;
+  --hs-p2: #b7590a;
+  --hs-p2-soft: #fdf2e4;
+  --hs-p3: #0f7490;
+  --hs-p3-soft: #e7f5f9;
+  --hs-p4: #17794a;
+  --hs-p4-soft: #e8f6ee;
+
+  /* —— 字体 —— */
+  --hs-font: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --hs-font-num: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Consolas', monospace;
+
+  /* 字号（舒展密度：大字） */
+  --hs-fs-hero: 54px;
+  --hs-fs-h1: 30px;
+  --hs-fs-h2: 19px;
+  --hs-fs-h3: 15px;
+  --hs-fs-body: 15px;
+  --hs-fs-small: 12px;
+  --hs-fs-micro: 11px;
+
+  /* 间距（舒展密度：大留白） */
+  --hs-gap: 28px;
+  --hs-gap-sm: 16px;
+  --hs-gap-lg: 48px;
+  --hs-pad-card: 26px;
+
+  /* 图表高度（舒展密度：图表加高） */
+  --hs-chart-h: 290px;
+
+  /* 内容宽度（网格结构：宽版多列） */
+  --hs-content-max: 1320px;
+
+  /* 圆角 / 阴影 */
+  --hs-r-sm: 8px;
+  --hs-r: 14px;
+  --hs-r-lg: 20px;
+  --hs-shadow: 0 1px 2px rgba(16, 21, 28, 0.04), 0 8px 24px -16px rgba(16, 21, 28, 0.18);
+}

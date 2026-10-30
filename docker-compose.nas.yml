@@ -1,0 +1,139 @@
+# ============================================================
+# 健康运动管理系统 · Docker Compose（群晖 DS220+ 部署版）
+#
+# 与 docker-compose.yml 的区别：
+#   **不含 build 段** —— 只使用「预构建镜像」。
+#   镜像由开发机 `scripts/export_images.sh` 导出、NAS 上 `docker load` 导入。
+#   目的：避免在 DS220+（Celeron J4025）上重新构建 Python 镜像（较慢）。
+#
+# 前置：
+#   1) NAS 上已 `docker load` 导入 hs-backend:<TAG> 与 hs-frontend:<TAG>
+#   2) 同目录存在 .env（含密钥）与 data/（含 garmin_tokens/ 等）
+#
+# 用法（NAS 上，SSH 或 Container Manager → 项目；群晖通常需 sudo）：
+#   export HS_TAG=v1.0.1
+#   sudo -E docker compose -f docker-compose.nas.yml up -d
+#   sudo docker compose -f docker-compose.nas.yml ps
+#
+# 宿主端口（默认 backend 18000 / frontend 18080，避开群晖上常被占用的 8000、8080）：
+#   export BACKEND_PORT=8000 FRONTEND_PORT=8080     # 若确认端口空闲，可改回
+#
+# 回滚（切到旧标签，无需重建）：
+#   export HS_TAG=v1.0.0 && sudo -E docker compose -f docker-compose.nas.yml up -d
+#
+# ------------------------------------------------------------
+# 2026-10-16 加固（NAS 故障复盘后新增）：
+#   DS220+ 为双核 J4025 且同时承载 KVM 虚拟机 / Jellyfin / iSCSI / 约 10 个容器，
+#   原先本 compose **没有任何资源护栏**，任何容器异常都会被放大到宿主机层面
+#   （实测：dockerd 就绪耗时 40~110 秒，导致 Container Manager 启动超时失败）。
+#   本次为三个服务统一增加：
+#     ① mem_limit / memswap_limit —— 禁止吃光宿主内存与 swap（防内核 OOM 杀 DSM 进程）
+#     ② cpus                      —— 单容器最多占用多少核（防跑满双核导致整机无响应）
+#     ③ pids_limit                —— 防进程/线程失控
+#     ④ logging(max-size/max-file)—— json-file 日志轮转（防写满 /volume1 卷）
+#     ⑤ no-new-privileges         —— 禁止提权
+#   这些键由 `docker compose up`（非 swarm）直接生效，**无需重建镜像**。
+#   如某键在旧版 Container Manager 上报错，可逐条注释掉，优先级：① > ④ > ② > ③ > ⑤。
+# ============================================================
+
+services:
+  backend:
+    image: hs-backend:${HS_TAG:-v1.0.1}
+    container_name: hs-backend
+    env_file: .env
+    environment:
+      RAW_DATA_DIR: /data/raw
+      DB_PATH: /data/db/health.db
+      AUDIT_DIR: /data/audit
+    volumes:
+      # 原始 Garmin 数据：读写（同步需首次落盘）；「不覆盖」由应用层保证（REQ-DATA-001）
+      - ./data/raw:/data/raw
+      - ./data/db:/data/db
+      - ./data/audit:/data/audit
+      - ./data/garmin_tokens:/data/garmin_tokens
+    ports:
+      # 宿主端口可用 BACKEND_PORT 覆盖（群晖常见的 8000 多被其它套件占用，故默认 18000）
+      # 注意：改这里**不影响**前端反代 —— frontend 容器仍走内网 backend:8000
+      - "${BACKEND_PORT:-18000}:8000"
+    # —— 资源护栏（2026-10-16 加固）——
+    # 实测空闲 78.8MiB；留足 numpy/LLM/Garmin 峰值余量后取 512M。
+    mem_limit: 512m
+    memswap_limit: 512m      # 与 mem_limit 相等 => 不允许使用 swap（避免拖垮宿主 I/O）
+    cpus: 1.0                # 双核宿主，单容器最多占 1 核
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/ops/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  scheduler:
+    image: hs-backend:${HS_TAG:-v1.0.1}
+    container_name: hs-scheduler
+    env_file: .env
+    environment:
+      RAW_DATA_DIR: /data/raw
+      DB_PATH: /data/db/health.db
+      AUDIT_DIR: /data/audit
+    volumes:
+      - ./data/raw:/data/raw
+      - ./data/db:/data/db
+      - ./data/audit:/data/audit
+      - ./data/garmin_tokens:/data/garmin_tokens
+    command: ["python", "-m", "app.orchestrator.scheduler"]
+    # 调度器不提供 HTTP 服务，需覆盖从镜像继承的 8000 端口健康检查，
+    # 否则会永久 unhealthy。此处用可移植写法（兼容较旧的 compose：
+    # `healthcheck: disable: true` 需要较新版本 compose spec）。
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # —— 资源护栏（2026-10-16 加固）——
+    # 调度器只在 07:30 / 周一 09:00 / 每月 1 日跑任务，负载为 I/O 等待型。
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    image: hs-frontend:${HS_TAG:-v1.0.1}
+    container_name: hs-frontend
+    ports:
+      # 宿主端口可用 FRONTEND_PORT 覆盖（默认 18080，避开 DSM 常用的 8080）
+      - "${FRONTEND_PORT:-18080}:80"
+    # —— 资源护栏（2026-10-16 加固）——
+    # 实测空闲 3.8MiB，Nginx 静态托管 + 反代，64M 绰绰有余。
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - backend
+    restart: unless-stopped

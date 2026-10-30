@@ -1,0 +1,63 @@
+# ============================================================
+# 健康运动管理系统 · 单容器镜像（nginx + uvicorn + scheduler）
+#
+# 构建（在仓库根目录执行）：
+#   docker build -f deploy/Dockerfile.single -t hs-app:v1.0.0 .
+#
+# 设计说明：
+#   - 三个进程由 supervisord 托管，对外只暴露 80 端口（nginx）。
+#   - nginx 托管前端静态资源，并把 /api/ 反代到本机 127.0.0.1:8000。
+#   - 后端与调度器共用 /app/backend 作为工作目录（保证 ../secrets 可解析）。
+#   - 镜像内含 secrets/（和风天气私钥）；.env 不打进镜像，运行时注入。
+# ============================================================
+
+# ---------- Stage 1：前端构建 ----------
+FROM node:22-alpine AS fe
+WORKDIR /fe
+COPY frontend/package.json ./
+RUN npm install --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+# ---------- Stage 2：运行时 ----------
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Asia/Shanghai
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tzdata curl nginx supervisor ca-certificates \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/nginx/sites-enabled/default
+
+WORKDIR /app/backend
+
+# 依赖层（利用层缓存）
+COPY backend/pyproject.toml ./
+RUN pip install --upgrade pip setuptools wheel
+
+# 应用代码与迁移配置
+COPY backend/app ./app
+COPY backend/alembic.ini ./
+RUN pip install -e .
+
+# 和风天气私钥：应用以 ../secrets 相对 backend 查找 → /app/secrets
+COPY secrets/ /app/secrets/
+
+# 前端静态资源
+COPY --from=fe /fe/dist /usr/share/nginx/html
+
+# 进程编排与反代配置
+COPY deploy/nginx.single.conf /etc/nginx/conf.d/hs.conf
+COPY deploy/supervisord.single.conf /etc/supervisor/conf.d/hs.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
+    CMD curl -fsS http://127.0.0.1/api/ops/health || exit 1
+
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]

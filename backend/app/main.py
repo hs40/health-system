@@ -1,0 +1,67 @@
+"""FastAPI 应用入口。"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app import __version__
+from app.api import data, environment, messages, ops, plans, reports, strategy
+from app.config import get_settings
+from app.db.session import init_db
+from app.errors import AppError
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("health-system")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    settings.ensure_dirs()
+    init_db()
+    logger.info(
+        "启动完成 env=%s risk_rule_version=%s db=%s",
+        settings.app_env,
+        settings.risk_rule_version,
+        settings.db_path,
+    )
+    yield
+    logger.info("关闭")
+
+
+app = FastAPI(
+    title="健康运动管理系统 API",
+    version=__version__,
+    description="本地优先 · AI 教练 · 风险拦截（Plan v3）",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 本地单用户；生产可由 Nginx 同源代理
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(AppError)
+async def _app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={"error": {"code": str(exc.code), "message": exc.message, "detail": exc.detail}},
+    )
+
+
+app.include_router(reports.router, prefix="/api")
+app.include_router(plans.router, prefix="/api")
+app.include_router(data.router, prefix="/api")
+app.include_router(ops.router, prefix="/api")
+app.include_router(environment.router, prefix="/api")
+app.include_router(strategy.router, prefix="/api")
+app.include_router(messages.router, prefix="/api")

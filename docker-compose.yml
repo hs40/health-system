@@ -1,0 +1,113 @@
+# ============================================================
+# 健康运动管理系统 · Docker Compose（宿主：群晖 DS220+）
+# 路线 C：全 Python 后端 + React 前端 + 调度容器
+#
+# 镜像标签（回滚演练 TD.4）：
+#   构建带版本标签：HS_TAG=v1.0.0 docker compose build
+#   回滚到旧版本  ：HS_TAG=v0.9.0 docker compose up -d   （无需重新构建）
+# ============================================================
+
+services:
+  backend:
+    image: hs-backend:${HS_TAG:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hs-backend
+    env_file: .env
+    environment:
+      RAW_DATA_DIR: /data/raw
+      DB_PATH: /data/db/health.db
+      AUDIT_DIR: /data/audit
+    volumes:
+      # 原始 Garmin 数据：可写（同步需首次落盘），但应用层强制「只写一次、不覆盖」
+      # （REQ-DATA-001，由 GarminAdapter._write_raw 保证，见 tests/test_business_rules.py）
+      - ./data/raw:/data/raw
+      # 派生/数据库/审计：可写
+      - ./data/db:/data/db
+      - ./data/audit:/data/audit
+      - ./data/garmin_tokens:/data/garmin_tokens
+    ports:
+      - "8000:8000"
+    # —— 资源护栏（2026-10-16 加固，与 docker-compose.nas.yml 保持一致）——
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/ops/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  scheduler:
+    image: hs-backend:${HS_TAG:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hs-scheduler
+    env_file: .env
+    environment:
+      RAW_DATA_DIR: /data/raw
+      DB_PATH: /data/db/health.db
+      AUDIT_DIR: /data/audit
+    volumes:
+      - ./data/raw:/data/raw
+      - ./data/db:/data/db
+      - ./data/audit:/data/audit
+      - ./data/garmin_tokens:/data/garmin_tokens
+    # 与 backend 共用镜像；调度器只跑 APScheduler（阶段 A 实现）
+    command: ["python", "-m", "app.orchestrator.scheduler"]
+    # 调度器不提供 HTTP 服务，需关闭从镜像继承的 8000 端口健康检查，
+    # 否则会永久显示 unhealthy（实际进程正常）
+    healthcheck:
+      disable: true
+    # —— 资源护栏（2026-10-16 加固）——
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: hs-frontend:${HS_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hs-frontend
+    ports:
+      - "8080:80"
+    # —— 资源护栏（2026-10-16 加固）——
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - backend
+    restart: unless-stopped

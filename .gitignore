@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# 环境与密钥（.env 及其所有变体；仅保留模板）
+.env
+.env.*
+!.env.example
+*.local
+
+# 密钥与凭据（和风天气 Ed25519 私钥等，严禁入库/入镜像）
+secrets/
+*.pem
+
+# 数据（不入库）
+data/
+!data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 数据库与代码备份（含真实健康数据，严禁入库）
+backups/
+*.bak-*
+*.bak
+
+# 本地开发日志
+.dev-logs/
+*.log
+
+# 构建/中间产物
+dist-images/
+*.tar
+*.tar.gz
+*.tmp
+*.timestamp-*.mjs
+
+# 截图与本地暂存
+.shots/
+.stage/
+
+# 本地 AI 工作区（会话记忆、临时产物）
+.workbuddy-ai/
+
+# 文档与需求报告（含个人健康数据、居住地、内网拓扑，仅存本地，绝不入库）
+# 注：《数据同步状态.md》已移至仓库根目录，随代码入库（无 IP/账号/位置）
+docs/
+/健康运动管理系统首期开发项目需求报告.md
+/健康运动管理系统新增二期需求报告.md
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store

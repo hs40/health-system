@@ -1,0 +1,83 @@
+{
+  "_comment": "力量训练 Notes 修正表。excludeSubs=全局剔除（热身/拉伸动作，不进 Notes）；singleSide=按「N次/侧」表达的单侧动作；activities[activityId].moves=键 'CATEGORY/SUBCATEGORY' -> 最终文本（直接替换该动作整段）；activities[activityId].exclude=该次额外剔除的动作键。",
+  "_version": "1.0",
+  "_source": "由用户 2026-10-12 逐条纠正生成",
+  "excludeSubs": [
+    "HYPEREXTENSION/STATIC_BACK_EXTENSION",
+    "HIP_STABILITY/HIP_CIRCLES"
+  ],
+  "singleSide": [
+    "LUNGE/",
+    "CURL/DUMBBELL_BICEPS_CURL",
+    "HIP_STABILITY/SIDE_LYING_LEG_RAISE",
+    "LUNGE/OVERHEAD_BULGARIAN_SPLIT_SQUAT"
+  ],
+  "activities": {
+    "648762099": {
+      "exclude": ["PLYO/BODY_WEIGHT_JUMP_SQUAT"],
+      "moves": {
+        "CURL/DUMBBELL_BICEPS_CURL": "哑铃弯举 12次/侧 × 3组 @4kg",
+        "HIP_STABILITY/SIDE_LYING_LEG_RAISE": "侧卧抬腿 10次/侧 × 2组"
+      }
+    },
+    "646301438": {
+      "moves": {
+        "SQUAT/WEIGHTED_SQUAT": "负重深蹲 15次 × 2组 @4kg"
+      }
+    },
+    "604661140": {
+      "moves": {
+        "LUNGE/OVERHEAD_BULGARIAN_SPLIT_SQUAT": "过顶保加利亚分腿蹲 12次/侧 13次/侧 12次/侧"
+      }
+    },
+    "602303006": {
+      "moves": {
+        "LUNGE/SIDE_LUNGE": "侧弓步 18 / 16 / 20 次"
+      }
+    },
+    "528485332": {
+      "moves": {
+        "HIP_STABILITY/DEAD_BUG": "死虫式 18 / 16 次",
+        "LUNGE/OVERHEAD_BULGARIAN_SPLIT_SQUAT": "过顶保加利亚分腿蹲 10次/侧 × 3组",
+        "SHOULDER_STABILITY/INCLINE_W_RAISE": "上斜W字平举 10次 × 1组"
+      }
+    },
+    "526014678": {
+      "moves": {
+        "SHOULDER_STABILITY/INCLINE_T_RAISE": "上斜T型平举 10次 × 1组"
+      }
+    },
+    "524115206": {
+      "moves": {
+        "SHOULDER_STABILITY/INCLINE_W_RAISE": "上斜W字平举 10次"
+      }
+    },
+    "521729895": {
+      "moves": {
+        "PUSH_UP/WIDE_HANDS_PUSH_UP": "宽距俯卧撑 5 / 5 / 6 次"
+      }
+    },
+    "517113762": {
+      "moves": {
+        "LUNGE/SIDE_LUNGE": "侧弓步 20次 × 1组"
+      }
+    },
+    "515070101": {
+      "moves": {
+        "CURL/": "弯举 10 / 8 / 5 次 @13kg",
+        "PUSH_UP/": "俯卧撑 9 / 8 / 8 次",
+        "SQUAT/": "深蹲 20次 × 3组"
+      }
+    },
+    "514353590": {
+      "moves": {
+        "SHOULDER_STABILITY/INCLINE_W_RAISE": "上斜W字平举 10次"
+      }
+    },
+    "514005643": {
+      "moves": {
+        "PUSH_UP/": "俯卧撑 8 / 8 / 7 次"
+      }
+    }
+  }
+}

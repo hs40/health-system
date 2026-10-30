@@ -1,0 +1,20 @@
+# 单容器镜像构建上下文排除项（构建上下文 = 仓库根目录）
+.git
+.gitignore
+.dev-logs
+data
+dist-images
+backups
+docs
+scripts
+tests
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/*.egg-info
+frontend/node_modules
+frontend/dist
+.env
+.env.local
+*.md
+defs2.tmp

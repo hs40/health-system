@@ -1,0 +1,189 @@
+@import './design/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--hs-bg);
+  color: var(--hs-ink-2);
+  font-family: var(--hs-font);
+  font-size: var(--hs-fs-body);
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  /* —— 卡片 —— */
+  .hs-card {
+    background: var(--hs-surface);
+    border: 1px solid var(--hs-border);
+    border-radius: var(--hs-r);
+    padding: var(--hs-pad-card);
+    box-shadow: var(--hs-shadow);
+  }
+
+  /* 底部附录区：靠排版降权分层，内容依旧全部可见 */
+  .hs-appendix {
+    background: var(--hs-surface-2);
+    border: 1px solid var(--hs-border);
+    border-left: 3px solid var(--hs-border-strong);
+    border-radius: var(--hs-r-sm);
+    padding: calc(var(--hs-pad-card) - 2px);
+    font-size: var(--hs-fs-small);
+    color: var(--hs-ink-3);
+  }
+
+  .hs-label {
+    font-size: var(--hs-fs-micro);
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--hs-ink-3);
+  }
+
+  /* 表单控件（日期、下拉）：与 DateNav 同一套边框与字号 */
+  .hs-input {
+    border: 1px solid var(--hs-border-strong);
+    background: var(--hs-surface);
+    color: var(--hs-ink-2);
+    border-radius: var(--hs-r-sm);
+    padding: 6px 10px;
+    font-size: var(--hs-fs-small);
+    line-height: 1.4;
+  }
+  .hs-input:hover {
+    border-color: var(--hs-ink-4);
+  }
+
+  /* 旧页面迁移用的语义工具类（颜色只允许来自 token） */
+  .hs-text-1 { color: var(--hs-ink); }
+  .hs-text-2 { color: var(--hs-ink-2); }
+  .hs-text-3 { color: var(--hs-ink-3); }
+  .hs-text-4 { color: var(--hs-ink-4); }
+  .hs-bd { border-color: var(--hs-border); }
+  .hs-bg-2 { background: var(--hs-surface-2); }
+  .hs-text-p1 { color: var(--hs-p1); }
+  .hs-text-p2 { color: var(--hs-p2); }
+  .hs-text-p4 { color: var(--hs-p4); }
+  .hs-dot-p2 { background: var(--hs-p2); }
+  .hs-dot-p4 { background: var(--hs-p4); }
+
+  .hs-value {
+    font-family: var(--hs-font-num);
+    font-size: 24px;
+    font-weight: 650;
+    color: var(--hs-ink);
+  }
+
+  .hs-hero-num {
+    font-family: var(--hs-font-num);
+    font-size: var(--hs-fs-hero);
+    font-weight: 650;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--hs-ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hs-section-title {
+    font-size: var(--hs-fs-h2);
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--hs-ink);
+  }
+
+  .hs-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: var(--hs-r-sm);
+    border: 1px solid var(--hs-border-strong);
+    background: var(--hs-surface);
+    padding: 6px 12px;
+    font-size: var(--hs-fs-small);
+    font-weight: 600;
+    color: var(--hs-ink-2);
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+  .hs-btn:hover:not(:disabled) {
+    background: var(--hs-surface-2);
+    border-color: var(--hs-ink-4);
+  }
+  .hs-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .hs-btn-primary {
+    background: var(--hs-accent);
+    border-color: var(--hs-accent);
+    color: #fff;
+  }
+  .hs-btn-primary:hover:not(:disabled) {
+    background: var(--hs-accent-ink);
+    border-color: var(--hs-accent-ink);
+  }
+
+  .hs-divider {
+    height: 1px;
+    background: var(--hs-border);
+  }
+
+  /* 层级导航（长页右侧悬浮） */
+  .hs-tiernav {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 1px solid var(--hs-border);
+    padding-left: 10px;
+    font-size: var(--hs-fs-micro);
+  }
+
+  .hs-skeleton {
+    background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);
+    background-size: 200% 100%;
+    animation: hs-shimmer 1.4s infinite linear;
+    border-radius: 6px;
+  }
+}
+
+@keyframes hs-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* 键盘焦点：全站统一外环（鼠标点击不出现） */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--hs-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 拖动中的卡片：略微抬起 */
+.hs-dragging {
+  opacity: 0.45;
+  transform: scale(0.985);
+}
+
+.hs-drag-over {
+  outline: 2px dashed var(--hs-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

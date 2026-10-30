@@ -1,0 +1,21 @@
+# 构建上下文排除（加速构建 + 防止密钥/数据进入镜像层）
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 运行时数据（通过 volume 挂载，不打进镜像）
+data/
+
+# 本地开发用（镜像内不需要）
+tests/
+scripts/
+.env
+.env.*
+
+# Docker 自身
+Dockerfile
+.dockerignore
