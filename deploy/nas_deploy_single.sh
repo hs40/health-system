@@ -13,14 +13,14 @@
 #   - data/                    数据目录
 #
 # 可选环境变量：
-#   HS_TAG=v1.0.4       镜像标签
+#   HS_TAG=v1.0.5       镜像标签
 #   HS_APP_PORT=18080   宿主端口
 # ============================================================
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-TAG="${HS_TAG:-v1.0.4}"
+TAG="${HS_TAG:-v1.0.5}"
 PORT="${HS_APP_PORT:-18080}"
 TAR="hs-app-${TAG}.tar"
 
