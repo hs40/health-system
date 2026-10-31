@@ -33,11 +33,11 @@ logger = logging.getLogger("hs.scheduler")
 _running = True
 
 
-def _sync_daily(session, target, settings):
+def _sync_daily(session, target, settings, *, refresh=False):
     """薄包装：便于测试替换（延迟导入避免循环依赖）。"""
     from app.services.daily_pipeline import sync_daily
 
-    return sync_daily(session, target, settings)
+    return sync_daily(session, target, settings, refresh=refresh)
 
 
 def _get_standard(session, target):
@@ -116,7 +116,8 @@ def _run_daily_core(session, target, settings, now, *, retry: bool) -> dict:
             out["skipped"] = "report_exists"
             return out
 
-    sync = _sync_daily(session, target, settings)
+    # 重试走「刷新」语义：把 07:30 写下的占位睡眠/健康数据更新为完整记录
+    sync = _sync_daily(session, target, settings, refresh=retry)
     out["steps"]["sync"] = sync.status
 
     sd = _get_standard(session, target) or StandardDaily(date=target)

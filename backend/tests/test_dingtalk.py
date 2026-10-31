@@ -276,7 +276,7 @@ def test_run_daily_job_pushes_to_dingtalk(monkeypatch):
     monkeypatch.setattr(scheduler, "get_settings", lambda: _settings(dingtalk_webhook="https://x"))
     monkeypatch.setattr(scheduler, "session_scope", lambda: contextlib.nullcontext(object()))
     # 睡眠完整（有入睡、有起床）→ 不触发「睡眠未结束」延迟门控
-    monkeypatch.setattr(scheduler, "_sync_daily", lambda s, d, st: _Sync())
+    monkeypatch.setattr(scheduler, "_sync_daily", lambda s, d, st, refresh=False: _Sync())
     monkeypatch.setattr(
         scheduler,
         "_get_standard",

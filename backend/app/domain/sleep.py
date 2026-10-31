@@ -4,8 +4,10 @@
 此时不应生成日报/计划/推送（睡眠数据不完整），而是每小时重试，直到有起床时间
 或到 12:00 再一次性生成。
 
-**关键边界（用户特别强调）**：没有入睡时间 = 没有睡眠，必须**直接跳过延迟逻辑**
-正常生成，不能误判成"睡眠未结束"。
+**关键边界（2026-10-31 修正）**：07:30 的「没有入睡时间」经 NAS 实测是 Garmin 的
+**全 null 占位记录**（`dailySleepDTO` 各字段皆 null，睡眠尚未落定），不是「没睡」。
+因此 `none` 与 `ongoing` 一样在 12:00 前延迟；到 12:00 无论是否完整都强制生成。
+（486 个睡眠日里只有 2 天真正无 start，代价可接受。）
 
 Garmin 缺失/占位时间戳会被 ``_epoch_ms_to_local(0)`` 转成 1970-01-01，因此不能
 只判 ``is None``——用年份阈值识别「无有效时间」。
@@ -44,5 +46,10 @@ def sleep_state(sd: StandardDaily) -> str:
 def should_defer(
     state: str, now: dt.datetime, *, deadline_hour: int = DEFAULT_DEADLINE_HOUR
 ) -> bool:
-    """是否应延迟生成：仅「睡眠未结束」且未到截止小时。"""
-    return state == SLEEP_ONGOING and now.hour < deadline_hour
+    """是否应延迟生成：睡眠**不完整**（none 或 ongoing）且未到截止小时。
+
+    2026-10-31 真实故障：07:30 Garmin 返回全 null 占位记录（start/end 都没有），
+    旧的「无 start = 没睡 → 立即生成」会误判（用户仍在睡）。故改为「不完整就延迟，
+    12:00 兜底」。
+    """
+    return state != SLEEP_COMPLETE and now.hour < deadline_hour

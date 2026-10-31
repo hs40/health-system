@@ -19,7 +19,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.adapters.garmin import GarminAdapter
 from app.config import Settings
 from app.db.models import TrainingSessionRow
-from app.schemas.domain import TrainingSession
+from app.schemas.domain import StandardDaily, TrainingSession
 from app.schemas.enums import SessionStatus, Sport
 from app.services import plan_service
 
@@ -180,16 +180,27 @@ def test_daily_job_uploads_without_schedule(monkeypatch, session):
 
     monkeypatch.setattr(sched_mod, "session_scope", _scope)
     monkeypatch.setattr(
+        sched_mod,
+        "_sync_daily",
+        lambda s, d, st, refresh=False: SimpleNamespace(status="ok", errors={}),
+    )
+    monkeypatch.setattr(
+        sched_mod,
+        "_get_standard",
+        lambda s, d: StandardDaily(
+            date=d,
+            sleep_start_ts=dt.datetime.combine(d, dt.time(0, 30)),
+            sleep_end_ts=dt.datetime.combine(d, dt.time(7, 0)),
+        ),
+    )
+    monkeypatch.setattr(
         daily_pipeline,
-        "run_daily",
-        lambda s, d, st: (
-            SimpleNamespace(status="ok"),
-            SimpleNamespace(
-                risk=SimpleNamespace(
-                    priority=SimpleNamespace(value="P4"),
-                    data_state=SimpleNamespace(value="A"),
-                )
-            ),
+        "generate_report",
+        lambda s, d, st, sync_errors=None: SimpleNamespace(
+            risk=SimpleNamespace(
+                priority=SimpleNamespace(value="P4"),
+                data_state=SimpleNamespace(value="A"),
+            )
         ),
     )
     monkeypatch.setattr(coach_service, "analyze_daily", lambda s, d, st: {"summary": "ok"})

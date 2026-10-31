@@ -84,13 +84,19 @@ def _ensure_previous_day_activities(
     return True
 
 
-def sync_daily(session: Session, day: dt.date, settings: Settings) -> GarminSyncResult:
+def sync_daily(
+    session: Session, day: dt.date, settings: Settings, *, refresh: bool = False
+) -> GarminSyncResult:
     """同步 + 标准化 + 入库（**不生成日报**）。
 
-    拆出以便调度器在「睡眠未结束」时只同步、把日报/计划/推送延后。
+    ``refresh=True``：用滚动窗口刷新（占位睡眠/健康数据可被完整记录覆盖），
+    供「睡眠未结束」的每小时重试使用；默认 append-only（首次写盘不覆盖）。
     """
     adapter = GarminAdapter(settings)
-    sync = adapter.sync_day(day)
+    if refresh:
+        sync, _changed = adapter.refresh_day(day)
+    else:
+        sync = adapter.sync_day(day)
     # 日报「昨日训练回顾」依赖 day-1 的 raw activities；ACWR 图依赖 day-1 的
     # training_load。07:30 任务只同步当天，这里幂等补齐（含负荷），避免回顾空白
     # 与 ACWR 图缺柱。

@@ -461,9 +461,21 @@ class GarminAdapter:
         ``{dataset: (旧 payload, 新 payload)}``，只包含**确实变了**的数据集
         （含超出窗口但云端已改的 ``frozen`` 项）。
         """
-        g = self.client()
         result = GarminSyncResult(date=day)
         changed: dict[str, tuple[Any, Any]] = {}
+        try:
+            g = self.client()
+        except Exception as e:  # noqa: BLE001 — 认证/网络层失败：逐数据集记错，不中断
+            msg = f"{type(e).__name__}: {e}"
+            for dataset in DATASETS:
+                result.errors[dataset] = msg
+            logger.error(
+                "Garmin 重拉 %s: 客户端初始化失败，全部 %d 个数据集标记为失败 —— %s",
+                day,
+                len(DATASETS),
+                msg,
+            )
+            return result, changed
 
         for dataset in DATASETS:
             try:
@@ -479,6 +491,13 @@ class GarminAdapter:
                 continue
 
             result.fetched.append(dataset)
+            if dataset == "activities":
+                # 与 sync_day 同口径：同日多次运动按 id 合并，避免刷新时降级
+                try:
+                    payload = _merge_activities(self.read_raw("activities", day), payload)
+                except AppError as e:
+                    result.errors[dataset] = f"{type(e).__name__}: {e}"
+                    continue
             state, old = self.refresh_raw(dataset, day, payload, window_days=window_days)
             if state == "written":
                 result.written.append(dataset)

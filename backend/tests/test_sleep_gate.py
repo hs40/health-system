@@ -78,8 +78,13 @@ def test_should_defer_until_noon() -> None:
     assert should_defer(SLEEP_ONGOING, dt.datetime(2026, 10, 30, 12, 0)) is False
 
 
-def test_should_not_defer_when_no_sleep_or_complete() -> None:
-    assert should_defer(SLEEP_NONE, dt.datetime(2026, 10, 30, 8, 0)) is False
+def test_should_defer_when_no_sleep_before_noon() -> None:
+    """无入睡时间（Garmin 全 null 占位）也视为未落定：12:00 前延迟，到点强制生成。"""
+    assert should_defer(SLEEP_NONE, dt.datetime(2026, 10, 30, 8, 0)) is True
+    assert should_defer(SLEEP_NONE, dt.datetime(2026, 10, 30, 12, 0)) is False
+
+
+def test_should_not_defer_when_complete() -> None:
     assert should_defer(SLEEP_COMPLETE, dt.datetime(2026, 10, 30, 8, 0)) is False
 
 
@@ -99,8 +104,8 @@ def session():
 def _patch(monkeypatch, sd, downstream: list, syncs: list) -> None:  # noqa: ANN001
     import app.orchestrator.scheduler as sched
 
-    def fake_sync(session, target, settings):  # noqa: ANN001
-        syncs.append(target)
+    def fake_sync(session, target, settings, *, refresh=False):  # noqa: ANN001
+        syncs.append((target, refresh))
         return GarminSyncResult(date=target)
 
     monkeypatch.setattr(sched, "_sync_daily", fake_sync)
@@ -142,8 +147,8 @@ def test_core_generates_at_noon_even_if_ongoing(monkeypatch, session) -> None:
     assert downstream == [DAY], "到 12:00 无论是否完整都必须生成"
 
 
-def test_core_generates_when_no_sleep_start(monkeypatch, session) -> None:
-    """没有入睡时间 = 没有睡眠：必须正常生成，不能被误判成"睡眠未结束"。"""
+def test_core_defers_when_no_sleep_start_before_noon(monkeypatch, session) -> None:
+    """无入睡时间（Garmin 全 null 占位）也视为未落定：12:00 前延迟。"""
     import app.orchestrator.scheduler as sched
 
     downstream: list = []
@@ -154,8 +159,23 @@ def test_core_generates_when_no_sleep_start(monkeypatch, session) -> None:
         session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 8, 0), retry=False
     )
 
+    assert out.get("deferred") == "sleep_ongoing"
+    assert downstream == [], "无入睡时间在 12:00 前不得提前生成"
+
+
+def test_core_generates_when_no_sleep_start_at_noon(monkeypatch, session) -> None:
+    import app.orchestrator.scheduler as sched
+
+    downstream: list = []
+    syncs: list = []
+    _patch(monkeypatch, _sd(None, None), downstream, syncs)
+
+    out = sched._run_daily_core(
+        session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 12, 0), retry=False
+    )
+
     assert not out.get("deferred")
-    assert downstream == [DAY], "无入睡时间不得触发延迟"
+    assert downstream == [DAY], "到 12:00 无论睡眠是否完整都必须生成"
 
 
 def test_core_retry_skips_when_report_exists(monkeypatch, session) -> None:
@@ -189,3 +209,32 @@ def test_core_retry_generates_when_sleep_complete(monkeypatch, session) -> None:
 
     assert not out.get("deferred")
     assert downstream == [DAY], "补到起床时间后应立即生成"
+
+
+def test_core_retry_requests_refresh(monkeypatch, session) -> None:
+    """每小时重试必须用刷新（refresh=True），才能把占位睡眠更新为完整记录。"""
+    import app.orchestrator.scheduler as sched
+
+    downstream: list = []
+    syncs: list = []
+    _patch(monkeypatch, _sd(VALID_START, VALID_END), downstream, syncs)
+
+    sched._run_daily_core(
+        session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 9, 30), retry=True
+    )
+
+    assert syncs == [(DAY, True)]
+
+
+def test_core_initial_run_does_not_refresh(monkeypatch, session) -> None:
+    import app.orchestrator.scheduler as sched
+
+    downstream: list = []
+    syncs: list = []
+    _patch(monkeypatch, _sd(VALID_START, VALID_END), downstream, syncs)
+
+    sched._run_daily_core(
+        session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 7, 30), retry=False
+    )
+
+    assert syncs == [(DAY, False)]
