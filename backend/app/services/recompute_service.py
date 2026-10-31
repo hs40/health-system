@@ -11,7 +11,8 @@
   当前任务跑完后**再触发新任务**（不在同一次执行里追加重算范围）。
 - **10.5 沿用现有机制**：状态机 ``task_run``、幂等键、并发控制、审计，
   不新增专用日志表/审计表。
-- **10.6 历史日报不自动更新**；当天日报在重算结束后重新生成并覆盖（Q4）。
+- **10.6（2026-10-31 用户修订）**：负荷变化后，区间内**所有日报**都重生成
+  （原「只更新当天」作废）；重算执行期间禁止外部生成日报（Q4）。
 
 Q4：重算执行期间**不生成当天日报**（``report_service.generate_daily`` 会拒绝，
 返回 ``E_TASK_IN_PROGRESS``）；重算结束后由本模块在任务末尾生成当天日报。
@@ -251,8 +252,8 @@ def regenerate_aggregates(
 def run(session: Session, start: dt.date, end: dt.date) -> dict:
     """执行重算：``start`` → ``end`` 逐日重算负荷，再从 ``start`` 回放 ACWR。
 
-    结束后生成 ``end``（当天）日报并覆盖（Q4 / 10.6），并**重生成区间覆盖的
-    周报/月报**（2026-10-25 缺口 1：否则「日报新口径、周月报旧快照」自相矛盾）。
+    区间内**逐日重生成日报**（2026-10-31 用户修订，取代原 10.6「只更新当天」），
+    并**重生成区间覆盖的周报/月报**（2026-10-25 缺口 1）。
     单日失败不阻断后续日期，最终状态按失败范围落 ``partial`` / ``failed``。
     """
     key = f"recompute:{start.isoformat()}~{end.isoformat()}"
@@ -264,40 +265,27 @@ def run(session: Session, start: dt.date, end: dt.date) -> dict:
     )
 
     errors: list[str] = []
+    reports_ok = 0
     try:
         days = 0
         d = start
         while d <= end:
             try:
+                # 与「全套重算」脚本同序：负荷 → ACWR → 日报。
+                # generate_daily 内部还会再算一次负荷/ACWR（幂等）；保留顺序便于对照。
                 report_service.recompute_day_load(session, d, _settings())
+                report_service.refresh_acwr(session, d)
+                report_service.generate_daily(
+                    session, d, _settings(), during_recompute=True
+                )
+                reports_ok += 1
             except Exception as exc:  # noqa: BLE001 - 单日失败不阻断后续日期
                 # 失败的那次 flush 已让会话进入 PendingRollbackError，
                 # 必须 rollback 才能继续后续日期（否则每天都抛同一个错）
                 session.rollback()
-                errors.append(f"load {d.isoformat()}: {exc}")
+                errors.append(f"day {d.isoformat()}: {exc}")
             days += 1
             d += dt.timedelta(days=1)
-
-        # 10.2：ACWR 必须从最早受影响日回放，不能只补当天
-        # （``refresh_acwr`` 内部按 CHRONIC_DAYS*2 回看预热，递推结果与全程重算一致）
-        d = start
-        while d <= end:
-            try:
-                report_service.refresh_acwr(session, d)
-            except Exception as exc:  # noqa: BLE001
-                session.rollback()
-                errors.append(f"acwr {d.isoformat()}: {exc}")
-            d += dt.timedelta(days=1)
-
-        # 10.6 + Q4：历史日报不更新，只重新生成当天日报（重算期间禁止外部生成）
-        daily_ok = True
-        try:
-            report_service.generate_daily(
-                session, end, _settings(), during_recompute=True
-            )
-        except Exception as exc:  # noqa: BLE001
-            daily_ok = False
-            errors.append(f"daily_report {end.isoformat()}: {exc}")
 
         # 聚合层（周报/月报）必须跟着重生成，否则会出现「日报新口径、周月报旧快照」
         try:
@@ -308,7 +296,7 @@ def run(session: Session, start: dt.date, end: dt.date) -> dict:
 
         status = TaskStatus.SUCCESS
         if errors:
-            status = TaskStatus.PARTIAL if daily_ok else TaskStatus.FAILED
+            status = TaskStatus.PARTIAL if reports_ok > 0 else TaskStatus.FAILED
     except Exception as exc:  # noqa: BLE001
         # 先 rollback 再落终态：否则 finish() 自己的 commit 也会被
         # PendingRollbackError 顶掉，任务永远停在 retry（僵尸）。
@@ -347,7 +335,7 @@ def run(session: Session, start: dt.date, end: dt.date) -> dict:
         "aggregates": aggregates,
             "status": status.value,
             "errors": errors,
-            "daily_report": daily_ok,
+            "daily_report": reports_ok == days,
         },
         audit_dir=_settings().audit_dir,
     )
@@ -359,5 +347,5 @@ def run(session: Session, start: dt.date, end: dt.date) -> dict:
         "days": days,
         "status": status.value,
         "errors": errors,
-        "daily_report_generated": daily_ok,
+        "daily_report_generated": reports_ok == days,
     }

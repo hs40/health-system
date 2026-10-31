@@ -227,10 +227,10 @@ def test_daily_report_generated_after_recompute(session, wire):
 
 
 # ============================================================
-# 10.6：历史日报不自动更新
+# 10.6（2026-10-31 用户修订）：负荷变化后，区间内所有日报都重算
 # ============================================================
-def test_history_daily_report_not_touched(session, wire):
-    """需求 10.6：重算只覆盖当天日报，历史日报保持原版本。"""
+def test_history_daily_report_regenerated(session, wire):
+    """2026-10-31 用户决策：不再只更新当天，历史日报也必须随负荷变化重算。"""
     _seed(session, START, 41)
     history_day = TODAY - dt.timedelta(days=10)
     report_service.generate_daily(session, history_day, recompute_service._settings())
@@ -240,7 +240,19 @@ def test_history_daily_report_not_touched(session, wire):
     recompute_service.request(session, history_day)
 
     row = session.exec(select(DailyReportRow).where(DailyReportRow.date == history_day)).first()
-    assert row.version == original_version, "历史日报不应被重算更新"
+    assert row.version > original_version, "历史日报必须随负荷变化重算"
+
+
+def test_recompute_regenerates_every_report_in_range(session, wire):
+    """区间内每一天都要有日报（不只 end）。"""
+    _seed(session, START, 41)
+    start = TODAY - dt.timedelta(days=5)
+
+    recompute_service.request(session, start)
+
+    dates = {r.date for r in session.exec(select(DailyReportRow)).all()}
+    expected = {start + dt.timedelta(days=i) for i in range(6)}
+    assert expected <= dates, f"缺少日报：{sorted(expected - dates)}"
 
 
 # ============================================================
@@ -339,7 +351,7 @@ def test_per_day_failure_does_not_poison_session(session, wire, monkeypatch):
     out = recompute_service.request(session, boom)
 
     # 失败日被记录，但后续日照常重算，任务落了终态（不是僵尸）
-    assert any(f"load {boom.isoformat()}" in e for e in out["errors"])
+    assert any(boom.isoformat() in e for e in out["errors"])
     assert load_range(session, good, good)  # 失败日之后的日子照样算出来了
     row = recompute_service.running_task(session)
     assert row is None  # 已落终态
