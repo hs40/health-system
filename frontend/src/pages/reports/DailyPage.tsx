@@ -151,6 +151,27 @@ export default function DailyPage() {
 
   const loadDays = useMemo(() => toLoadDays(loadSeries.data), [loadSeries.data])
 
+  // 报告日：ACWR 取「当天」实时值（与下方图表同源，避免日报快照过期导致不一致）；
+  // 前一日：综合负荷 / 可计算活动取「前一天」，而不是当天。
+  const reportDay = useMemo(
+    () => (data ? findLoadDay(loadSeries.data?.days, data.date.slice(5)) : undefined),
+    [loadSeries.data, data],
+  )
+  const prevDay = useMemo(
+    () => (data ? findLoadDay(loadSeries.data?.days, AddDays(data.date, -1).slice(5)) : undefined),
+    [loadSeries.data, data],
+  )
+  const acwrValue = reportDay?.acwr != null ? Number(reportDay.acwr) : (data?.acwr?.ratio ?? null)
+  const acwrState = reportDay?.acwr_state ?? null
+  const prevLoad = useMemo(() => {
+    if (prevDay?.total != null) return Number(prevDay.total)
+    // 图表数据不可用时，回退到前一日活动表逐条 load 之和
+    const yt = (data?.yesterday_training ?? {}) as Record<string, unknown>
+    const acts = (yt['activities'] ?? yt['items'] ?? []) as Record<string, unknown>[]
+    const vals = acts.map((a) => Number(a['load'])).filter((v) => Number.isFinite(v))
+    return vals.length ? vals.reduce((s, v) => s + v, 0) : null
+  }, [prevDay, data])
+
   const sleepPoints = useMemo(
     () =>
       (sleepSeries.data?.points ?? []).map((p) => ({
@@ -170,11 +191,14 @@ export default function DailyPage() {
     const sports = Object.entries(hit.by_sport ?? {})
     setDetail({
       title: `${hit.date} 训练负荷`,
-      subtitle: `ACWR ${hit.acwr ?? '不可计算'}${
+      subtitle: `ACWR ${hit.acwr != null ? Number(hit.acwr).toFixed(2) : '不可计算'}${
         hit.acwr_state ? ` · ${ACWR_STATE_LABEL[hit.acwr_state] ?? hit.acwr_state}` : ''
       }`,
       rows: [
-        { label: '当日总负荷', value: String(hit.total ?? 0) },
+        {
+          label: '当日总负荷',
+          value: hit.total != null ? Number(hit.total).toFixed(2) : '0.00',
+        },
         ...sports.map(([k, v]) => ({ label: k === 'rest' ? '休息' : sportLabel(k), value: String(v) })),
         ...(hit.not_computable?.length
           ? [{ label: '不可计算活动', value: `${hit.not_computable.length} 项` }]
@@ -197,7 +221,6 @@ export default function DailyPage() {
 
   const recovery = (data?.recovery ?? {}) as Record<string, unknown>
   const sleep = (data?.sleep ?? {}) as Record<string, unknown>
-  const load = (data?.load ?? {}) as Record<string, unknown>
 
   const tiers = [
     { id: 'tier-top', label: '结论' },
@@ -394,16 +417,18 @@ export default function DailyPage() {
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <Metric
                     label="ACWR"
-                    value={data.acwr?.ratio != null ? data.acwr.ratio.toFixed(2) : '—'}
+                    value={acwrValue != null ? acwrValue.toFixed(2) : '—'}
                     hint={
-                      data.acwr?.ratio != null
-                        ? `急性 ${data.acwr.acute.toFixed(1)} / 慢性 ${data.acwr.chronic.toFixed(1)}`
-                        : data.acwr?.note ?? '不可计算'
+                      acwrValue != null
+                        ? acwrState
+                          ? (ACWR_STATE_LABEL[acwrState] ?? acwrState)
+                          : '实时值'
+                        : (data.acwr?.note ?? '不可计算')
                     }
                     tone={
-                      data.acwr?.ratio != null && data.acwr.ratio >= 1.5
+                      acwrValue != null && acwrValue >= 1.5
                         ? 'risk'
-                        : data.acwr?.ratio != null && data.acwr.ratio >= 1.3
+                        : acwrValue != null && acwrValue >= 1.3
                           ? 'warn'
                           : 'default'
                     }
@@ -411,18 +436,18 @@ export default function DailyPage() {
                   />
                   <Metric
                     label="综合负荷"
-                    value={numOrNull(load.combined) ?? 0}
+                    value={prevLoad != null ? prevLoad.toFixed(2) : '—'}
                     unit="分"
-                    hint="各运动类型日累计之和"
+                    hint="前一日各运动类型累计之和"
                     size="sm"
                   />
                   <Metric
                     label="可计算活动"
-                    value={Object.keys((load.by_sport as Record<string, number>) ?? {}).length}
+                    value={prevDay ? Object.keys(prevDay.by_sport ?? {}).length : '—'}
                     unit="类"
                     hint={
-                      (load.not_computable as unknown[] | undefined)?.length
-                        ? `${(load.not_computable as unknown[]).length} 项不可计算`
+                      prevDay?.not_computable?.length
+                        ? `${prevDay.not_computable.length} 项不可计算`
                         : '无缺失'
                     }
                     size="sm"

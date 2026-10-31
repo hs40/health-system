@@ -54,7 +54,7 @@ export function LoadAcwrChart({
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      valueFormatter: (v) => (typeof v === 'number' ? v.toFixed(1) : String(v ?? '—')),
+      valueFormatter: (v) => (typeof v === 'number' ? v.toFixed(2) : String(v ?? '—')),
     },
     legend: {
       top: 0,
