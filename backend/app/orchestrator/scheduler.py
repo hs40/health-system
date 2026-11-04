@@ -187,6 +187,51 @@ def run_weekly_job() -> dict:
     return out
 
 
+def run_tredict_sync_job() -> dict:
+    """Tredict 同步任务（每日 23:00，V42）。
+
+    执行 ``daily_sync.py --profile all``：
+    - 活动：拉 FIT → 解析 → 上传 Tredict → 拉 Tredict 自生成 → 刷新匹配 → 重算负荷
+    - 健康：拉 Garmin 健康 → 上传 Tredict
+    - 校验：云端三路校验（活动+健康）→ 写 ledger → 消息中心告警
+
+    替代原本地从开发机手动运行 ``daily_sync.py``；NAS 容器内置调度，
+    不再依赖外部 cron。
+    """
+    import os
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    backend = _Path(__file__).resolve().parents[2]
+    cmd = [
+        _sys.executable, "-u",
+        str(backend / "scripts" / "daily_sync.py"),
+        "--profile", "all",
+    ]
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+    out: dict = {"steps": {}}
+    try:
+        proc = subprocess.run(
+            cmd, cwd=backend, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=env, timeout=3600,
+        )
+        out["steps"]["tredict_sync"] = "ok" if proc.returncode == 0 else f"exit:{proc.returncode}"
+        out["returncode"] = proc.returncode
+        lines = (proc.stdout or "").splitlines()
+        out["tail"] = lines[-10:] if lines else []
+        if proc.returncode != 0:
+            logger.error(
+                "Tredict 同步失败 exit=%d tail=%s",
+                proc.returncode, lines[-5:] if lines else [],
+            )
+    except Exception as e:  # noqa: BLE001
+        out["steps"]["tredict_sync"] = f"failed: {e}"
+        logger.error("Tredict 同步异常: %s", e)
+    return out
+
+
 def run_monthly_job() -> dict:
     """月任务（阶段 C）：上月月报 + 长期目标偏离分析（TC.3）。"""
     from app.services.report_service import analyze_monthly, generate_monthly
@@ -298,6 +343,13 @@ def build_scheduler() -> BackgroundScheduler:
         run_sleep_retry_job,
         _crontab_trigger(settings.sleep_deadline_cron, settings.sched_tz),
         id="sleep_deadline",
+        replace_existing=True,
+    )
+    # Tredict 同步 + 云端校验（2026-11-04 V42）：每日 23:00
+    sched.add_job(
+        run_tredict_sync_job,
+        _crontab_trigger(settings.tredict_sync_cron, settings.sched_tz),
+        id="tredict_sync",
         replace_existing=True,
     )
     return sched

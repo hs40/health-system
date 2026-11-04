@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     sleep_deadline_cron: str = "0 12 * * *"  # 12:00 兜底
     sleep_deadline_hour: int = 12
 
+    # —— Tredict 同步 + 云端校验（2026-11-04 V42）——
+    # 23:00 跑 daily_sync.py --profile all：活动上传 + 健康上传 + 链式校验。
+    # 替代原本地从开发机手动运行 daily_sync.py，NAS 容器内置调度。
+    tredict_sync_cron: str = "0 23 * * *"  # 每日 23:00
+
     # —— 钉钉群机器人（日报推送，2026-10-26）——
     # webhook 为空 = 功能禁用（前端按钮显示但禁用；定时任务跳过推送）。
     dingtalk_webhook: str = ""
