@@ -140,3 +140,30 @@ class TestDeployScriptPullsFromRegistry:
                 pytest.fail(
                     f"nas_deploy_single.sh 仍定义 TAR 变量（第 {i} 行）: {stripped}"
                 )
+
+
+# ---------- proxy script: 代理 Basic 认证 ----------
+
+class TestProxyScriptAuth:
+    """setup_nas_proxy.sh 必须支持代理 Basic 认证。
+
+    NAS 实测代理 192.168.2.10:7893 返回 407 Proxy-Authenticate: Basic，
+    无凭据的代理地址会让 docker pull 全部失败。
+    """
+
+    def test_supports_basic_auth_credentials(self):
+        """脚本接受 PROXY_USER / PROXY_PASS 并构造带认证的代理 URL。"""
+        content = _read(REPO_ROOT / "deploy" / "setup_nas_proxy.sh")
+        assert "PROXY_USER" in content, "脚本未支持 PROXY_USER"
+        assert "PROXY_PASS" in content, "脚本未支持 PROXY_PASS"
+
+    def test_validates_proxy_before_restarting_dockerd(self):
+        """写配置/重启 dockerd 前先用 curl 验证代理，避免凭据错误白重启中断容器。"""
+        content = _read(REPO_ROOT / "deploy" / "setup_nas_proxy.sh")
+        verify_at = content.find("curl")
+        restart_at = content.find("systemctl daemon-reload")
+        assert verify_at != -1, "脚本缺少代理连通性验证"
+        assert restart_at != -1, "脚本缺少 daemon-reload"
+        assert verify_at < restart_at, (
+            "代理验证必须在 daemon-reload 之前，否则凭据错误也会重启 dockerd"
+        )
