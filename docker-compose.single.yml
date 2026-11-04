@@ -14,7 +14,7 @@
 
 services:
   app:
-    image: ghcr.io/hs40/health-system:${HS_TAG:-v1.0.8}
+    image: ghcr.io/hs40/health-system:${HS_TAG:-latest}
     container_name: hs-app
     env_file: .env
     environment:

@@ -167,3 +167,27 @@ class TestProxyScriptAuth:
         assert verify_at < restart_at, (
             "代理验证必须在 daemon-reload 之前，否则凭据错误也会重启 dockerd"
         )
+
+
+# ---------- 默认标签应为 latest（发版手动钉版本） ----------
+
+class TestDefaultTagIsLatest:
+    """compose 与部署脚本的默认标签应为 latest，发版时通过 HS_TAG 钉具体版本。
+
+    防止回退到硬编码的具体版本号（如 v1.0.8），否则不指定 HS_TAG 时会
+    拉到过期镜像。
+    """
+
+    def test_compose_default_tag_is_latest(self):
+        """docker-compose.single.yml 默认标签为 latest。"""
+        content = _read(REPO_ROOT / "docker-compose.single.yml")
+        assert "${HS_TAG:-latest}" in content, (
+            "compose 默认标签应指向 latest，发版时通过 HS_TAG 钉具体版本"
+        )
+
+    def test_deploy_script_default_tag_is_latest(self):
+        """nas_deploy_single.sh 默认标签为 latest。"""
+        content = _read(REPO_ROOT / "deploy" / "nas_deploy_single.sh")
+        assert 'TAG="${HS_TAG:-latest}"' in content, (
+            "nas_deploy_single.sh 默认标签应为 latest"
+        )

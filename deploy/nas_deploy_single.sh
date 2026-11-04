@@ -19,14 +19,14 @@
 #   2. docker login ghcr.io -u hs40 -p <PAT>（PAT 需 read:packages 权限）
 #
 # 可选环境变量：
-#   HS_TAG=v1.0.8       镜像标签（默认 v1.0.8，可用 latest 或具体版本号）
+#   HS_TAG=latest       镜像标签（默认 latest；发版时改 v1.0.x 钉具体版本）
 #   HS_APP_PORT=18080   宿主端口
 # ============================================================
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-TAG="${HS_TAG:-v1.0.8}"
+TAG="${HS_TAG:-latest}"
 PORT="${HS_APP_PORT:-18080}"
 IMAGE="ghcr.io/hs40/health-system:${TAG}"
 
