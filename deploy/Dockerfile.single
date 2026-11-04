@@ -8,7 +8,10 @@
 #   - 三个进程由 supervisord 托管，对外只暴露 80 端口（nginx）。
 #   - nginx 托管前端静态资源，并把 /api/ 反代到本机 127.0.0.1:8000。
 #   - 后端与调度器共用 /app/backend 作为工作目录（保证 ../secrets 可解析）。
-#   - 镜像内含 secrets/（和风天气私钥）；.env 不打进镜像，运行时注入。
+#   - secrets/ 不打入镜像（和风天气私钥）；运行时通过 compose 卷挂载注入。
+#     → Dockerfile 不 COPY secrets/，.dockerignore 排除 secrets/。
+#     → compose: ./secrets:/app/secrets:ro
+#   - .env 不打入镜像，运行时 env_file 注入。
 # ============================================================
 
 # ---------- Stage 1：前端构建 ----------
@@ -45,8 +48,7 @@ COPY backend/app ./app
 COPY backend/alembic.ini ./
 RUN pip install -e .
 
-# 和风天气私钥：应用以 ../secrets 相对 backend 查找 → /app/secrets
-COPY secrets/ /app/secrets/
+# secrets/ 不打入镜像——运行时通过 compose 卷挂载（./secrets:/app/secrets:ro）。
 
 # 前端静态资源
 COPY --from=fe /fe/dist /usr/share/nginx/html

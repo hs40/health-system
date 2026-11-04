@@ -14,7 +14,7 @@
 
 services:
   app:
-    image: hs-app:${HS_TAG:-v1.0.5}
+    image: ghcr.io/hs40/health-system:${HS_TAG:-v1.0.8}
     container_name: hs-app
     env_file: .env
     environment:
@@ -40,6 +40,8 @@ services:
       - ./data/db:/data/db
       - ./data/audit:/data/audit
       - ./data/garmin_tokens:/data/garmin_tokens
+      # secrets 只读挂载（和风天气 Ed25519 私钥等，不入镜像，运行时注入）
+      - ./secrets:/app/secrets:ro
     ports:
       # 注意：变量名必须与 .env 中的 APP_PORT 区分。
       # .env 的 APP_PORT=8000 是容器内 uvicorn 端口，若此处复用同名变量，

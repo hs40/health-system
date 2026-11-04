@@ -2,27 +2,33 @@
 # ============================================================
 # 健康运动管理系统 · NAS 单容器部署（在 NAS 上以 root 执行）
 #
+# 从 ghcr.io 拉取镜像并部署，不再依赖本地 tar 包。
+#
 # 用法：
 #   cd /volume1/docker/health-system
 #   sudo bash nas_deploy_single.sh
 #
 # 前置（本脚本同目录）：
-#   - hs-app-<TAG>.tar         镜像包
 #   - docker-compose.single.yml
 #   - .env                     密钥配置（已去除行内注释）
-#   - data/                    数据目录
+#   - secrets/                 和风天气私钥（qweather_ed25519_private.pem）
+#   - data/                    数据目录（首次自动创建）
+#
+# 首次使用前需完成一次性配置（见 deploy/setup_nas_proxy.sh）：
+#   1. 配置 Docker daemon 代理（systemd drop-in）
+#   2. docker login ghcr.io -u hs40 -p <PAT>（PAT 需 read:packages 权限）
 #
 # 可选环境变量：
-#   HS_TAG=v1.0.5       镜像标签
+#   HS_TAG=v1.0.8       镜像标签（默认 v1.0.8，可用 latest 或具体版本号）
 #   HS_APP_PORT=18080   宿主端口
 # ============================================================
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-TAG="${HS_TAG:-v1.0.5}"
+TAG="${HS_TAG:-v1.0.8}"
 PORT="${HS_APP_PORT:-18080}"
-TAR="hs-app-${TAG}.tar"
+IMAGE="ghcr.io/hs40/health-system:${TAG}"
 
 log() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
@@ -51,16 +57,24 @@ fi
 log "0. 环境"
 echo "  docker   : $DOCKER"
 echo "  compose  : $COMPOSE"
-echo "  镜像标签 : $TAG"
+echo "  镜像     : $IMAGE"
 echo "  宿主端口 : $PORT"
 
 # --- 前置检查 ---
-[ -f "$TAR" ] || { echo "错误：缺少镜像包 $TAR"; exit 1; }
 [ -f "docker-compose.single.yml" ] || { echo "错误：缺少 docker-compose.single.yml"; exit 1; }
 [ -f ".env" ] || { echo "错误：缺少 .env"; exit 1; }
+[ -d "secrets" ] || { echo "错误：缺少 secrets/ 目录（需放入 qweather_ed25519_private.pem）"; exit 1; }
+[ -f "secrets/qweather_ed25519_private.pem" ] || { echo "错误：缺少 secrets/qweather_ed25519_private.pem"; exit 1; }
 
-log "1. 导入镜像 $TAR"
-"$DOCKER" load -i "$TAR"
+log "1. 拉取镜像 $IMAGE"
+if ! "$DOCKER" pull "$IMAGE"; then
+  echo
+  echo "拉取失败。可能原因："
+  echo "  1) 未配置 Docker 代理 → 运行 deploy/setup_nas_proxy.sh"
+  echo "  2) 未登录 ghcr.io → docker login ghcr.io -u hs40 -p <PAT>"
+  echo "  3) 标签不存在 → 检查 GitHub Actions 是否构建成功"
+  exit 1
+fi
 
 log "2. 准备数据目录"
 mkdir -p data/raw data/db data/audit data/garmin_tokens
