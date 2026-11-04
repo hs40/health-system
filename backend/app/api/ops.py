@@ -196,10 +196,11 @@ def trigger_sync(req: SyncRequest, session: Session = Depends(get_session)) -> d
 
     settings = get_settings()
     target = dt.date.fromisoformat(req.date) if req.date else dt.date.today()
-    sync, report = run_daily(session, target, settings)
+    sync, report = run_daily(session, target, settings, refresh=req.refresh)
     return {
         "accepted": True,
         "mode": req.mode,
+        "refresh": req.refresh,
         "date": target.isoformat(),
         "sync": {
             "status": sync.status,

@@ -123,7 +123,10 @@ export default function DailyPage() {
   const invalidate = () => invalidateReport(qc, 'daily', day)
 
   const runSync = useMutation({
-    mutationFn: () => api.post('/api/ops/sync', { mode: 'incremental', date: day }),
+    // refresh=true：窗口内覆盖 raw。07:30 的睡眠占位（全 null）是 append-only 写下的，
+    // 不覆盖的话「同步数据」拉到完整睡眠也写不进去，日报仍为空。
+    mutationFn: () =>
+      api.post('/api/ops/sync', { mode: 'incremental', date: day, refresh: true }),
     onSettled: () => setBusy(null),
     onSuccess: invalidate,
   })

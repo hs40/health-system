@@ -178,7 +178,51 @@ def test_core_generates_when_no_sleep_start_at_noon(monkeypatch, session) -> Non
     assert downstream == [DAY], "到 12:00 无论睡眠是否完整都必须生成"
 
 
-def test_core_retry_skips_when_report_exists(monkeypatch, session) -> None:
+def test_core_retry_skips_when_report_exists_and_sleep_complete(monkeypatch, session) -> None:
+    """日报已存在且睡眠已完整：无需再刷，直接跳过。"""
+    import app.orchestrator.scheduler as sched
+
+    session.add(DailyReportRow(date=DAY, payload={}))
+    session.commit()
+    downstream: list = []
+    syncs: list = []
+    _patch(monkeypatch, _sd(VALID_START, VALID_END), downstream, syncs)
+
+    out = sched._run_daily_core(
+        session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 8, 30), retry=True
+    )
+
+    assert out.get("skipped") == "report_exists"
+    assert syncs == [], "睡眠已完整时重试不得再同步"
+    assert downstream == []
+
+
+def test_core_retry_skips_when_report_exists_after_deadline(monkeypatch, session) -> None:
+    """过了 12:00 兜底线：即便睡眠仍不完整也不再重试（兜底已生成）。"""
+    import app.orchestrator.scheduler as sched
+
+    session.add(DailyReportRow(date=DAY, payload={}))
+    session.commit()
+    downstream: list = []
+    syncs: list = []
+    _patch(monkeypatch, _sd(VALID_START, None), downstream, syncs)
+
+    out = sched._run_daily_core(
+        session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 12, 0), retry=True
+    )
+
+    assert out.get("skipped") == "report_exists"
+    assert syncs == [], "过截止线后不再同步"
+    assert downstream == []
+
+
+def test_core_retry_refreshes_when_report_exists_but_sleep_incomplete(monkeypatch, session) -> None:
+    """日报已存在但睡眠未完整（占位睡眠提前生成日报的场景）：12:00 前应刷新而非跳过。
+
+    2026-10-31 真实故障：07:30 旧代码按占位睡眠生成了日报；部署修复后，若重试因
+    「日报已存在」直接跳过，占位数据永远不会被完整睡眠覆盖 → 当日数据永久不完整。
+    因此「跳过」必须以「睡眠已完整 / 已过 12:00」为前提。
+    """
     import app.orchestrator.scheduler as sched
 
     session.add(DailyReportRow(date=DAY, payload={}))
@@ -191,9 +235,9 @@ def test_core_retry_skips_when_report_exists(monkeypatch, session) -> None:
         session, DAY, Settings(_env_file=None), dt.datetime(2026, 10, 30, 8, 30), retry=True
     )
 
-    assert out.get("skipped") == "report_exists"
-    assert syncs == [], "日报已生成时重试不得再同步"
-    assert downstream == []
+    assert syncs == [(DAY, True)], "日报已存在但睡眠未完整时，重试必须刷新"
+    assert out.get("deferred") == "sleep_ongoing"
+    assert downstream == [], "睡眠仍未完整，不得生成"
 
 
 def test_core_retry_generates_when_sleep_complete(monkeypatch, session) -> None:

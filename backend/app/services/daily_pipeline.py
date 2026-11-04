@@ -134,10 +134,14 @@ def generate_report(
 
 
 def run_daily(
-    session: Session, day: dt.date, settings: Settings
+    session: Session, day: dt.date, settings: Settings, *, refresh: bool = False
 ) -> tuple[GarminSyncResult, DailyReport]:
-    """执行单日端到端流水线（手动同步/运维端点使用，**始终生成日报**）。"""
-    sync = sync_daily(session, day, settings)
+    """执行单日端到端流水线（手动同步/运维端点使用，**始终生成日报**）。
+
+    ``refresh=True``：先按滚动窗口覆盖 raw 再生成日报。手动「同步数据」必须用它，
+    否则 07:30 写下的占位睡眠（全 null）因 append-only 永远不会被完整记录覆盖。
+    """
+    sync = sync_daily(session, day, settings, refresh=refresh)
     report = generate_report(session, day, settings, sync_errors=sync.errors)
     return sync, report
 

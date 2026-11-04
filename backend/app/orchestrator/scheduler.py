@@ -99,7 +99,7 @@ def _run_daily_core(session, target, settings, now, *, retry: bool) -> dict:
     - 没有入睡时间（没有睡眠）/ 睡眠完整 / 到 12:00 → 正常跑下游；
     - ``retry=True``（每小时重试）时，当天日报已存在则直接跳过。
     """
-    from app.domain.sleep import should_defer, sleep_state
+    from app.domain.sleep import SLEEP_COMPLETE, should_defer, sleep_state
     from app.schemas.domain import StandardDaily
 
     out: dict = {"date": target.isoformat(), "steps": {}}
@@ -113,8 +113,15 @@ def _run_daily_core(session, target, settings, now, *, retry: bool) -> dict:
             select(DailyReportRow).where(DailyReportRow.date == target)
         ).first()
         if exists is not None:
-            out["skipped"] = "report_exists"
-            return out
+            # 「日报已存在」≠「数据已完整」：占位睡眠可能已提前生成过日报
+            # （2026-10-31 故障：07:30 旧代码按全 null 占位生成日报，之后重试因
+            # 日报存在而永久跳过，占位数据再也无法被完整睡眠覆盖）。
+            # 只有睡眠已完整、或已过 12:00 兜底线，才真正跳过；否则继续刷新自愈。
+            sd0 = _get_standard(session, target) or StandardDaily(date=target)
+            st0 = sleep_state(sd0)
+            if st0 == SLEEP_COMPLETE or now.hour >= settings.sleep_deadline_hour:
+                out["skipped"] = "report_exists"
+                return out
 
     # 重试走「刷新」语义：把 07:30 写下的占位睡眠/健康数据更新为完整记录
     sync = _sync_daily(session, target, settings, refresh=retry)

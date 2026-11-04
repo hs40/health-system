@@ -188,6 +188,7 @@ class SyncRequest(BaseModel):
     mode: str = "incremental"  # incremental | full
     task: str | None = None  # 可选：限定单个任务类型
     date: str | None = None  # 可选：指定同步日期（YYYY-MM-DD），缺省为今天
+    refresh: bool = False  # 可选：窗口内覆盖 raw（手动「同步数据」用它修复占位数据）
 
 
 class TaskListResponse(BaseModel):

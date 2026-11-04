@@ -56,7 +56,7 @@ def test_data_api_fields_derive_from_registry() -> None:
     from app.api import data
     from app.domain.standard_fields import GARMIN_TO_DB
 
-    assert data._STANDARD_FIELDS == dict(GARMIN_TO_DB)
+    assert dict(GARMIN_TO_DB) == data._STANDARD_FIELDS
 
 
 def test_verify_fields_derive_from_registry_and_cover_all() -> None:
