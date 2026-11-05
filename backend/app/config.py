@@ -112,7 +112,10 @@ class Settings(BaseSettings):
     # webhook 为空 = 功能禁用（前端按钮显示但禁用；定时任务跳过推送）。
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""  # 机器人「加签」密钥；关键词模式留空
-    app_base_url: str = ""  # 报告页链接前缀，如 http://nas:8000
+    # 钉钉日报「查看完整报告」链接前缀（对外访问地址，公网域名）。
+    # 2026-11-05：改用域名，旧 http://192.168.2.10:18080 随 NAS 换 IP 已失效。
+    # 部署时仍可用 .env 的 APP_BASE_URL 覆盖（env_file 优先级更高）。
+    app_base_url: str = "http://hs.qingtianjian.com:18080"
 
     @staticmethod
     def _secret_present(value: SecretStr | None) -> bool:
