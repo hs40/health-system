@@ -188,48 +188,23 @@ def run_weekly_job() -> dict:
 
 
 def run_tredict_sync_job() -> dict:
-    """Tredict 同步任务（每日 23:00，V42）。
+    """Tredict 同步任务（每日 23:00，V43）——**容器内直接函数调用**。
 
-    执行 ``daily_sync.py --profile all``：
-    - 活动：拉 FIT → 解析 → 上传 Tredict → 拉 Tredict 自生成 → 刷新匹配 → 重算负荷
-    - 健康：拉 Garmin 健康 → 上传 Tredict
-    - 校验：云端三路校验（活动+健康）→ 写 ledger → 消息中心告警
+    V42 起子进程调独立脚本，但镜像只 ``COPY backend/app``，根本没有 scripts 目录
+    → 任务静默失败 10 天。V43 改为调用 ``app/services`` 内的 ``tredict_sync_service``
+    （随 app 包进镜像、路径走 settings、可单测、可观测）。
 
-    替代原本地从开发机手动运行 ``daily_sync.py``；NAS 容器内置调度，
-    不再依赖外部 cron。
+    执行：活动上传（含自动补 FIT）+ 健康差集上传 + 云端覆盖校验 → 写 audit + 失败告警。
     """
-    import os
-    import subprocess
-    import sys as _sys
-    from pathlib import Path as _Path
+    from app.services.tredict_sync_service import run_tredict_sync
 
-    backend = _Path(__file__).resolve().parents[2]
-    cmd = [
-        _sys.executable, "-u",
-        str(backend / "scripts" / "daily_sync.py"),
-        "--profile", "all",
-    ]
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-
-    out: dict = {"steps": {}}
+    settings = get_settings()
     try:
-        proc = subprocess.run(
-            cmd, cwd=backend, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", env=env, timeout=3600,
-        )
-        out["steps"]["tredict_sync"] = "ok" if proc.returncode == 0 else f"exit:{proc.returncode}"
-        out["returncode"] = proc.returncode
-        lines = (proc.stdout or "").splitlines()
-        out["tail"] = lines[-10:] if lines else []
-        if proc.returncode != 0:
-            logger.error(
-                "Tredict 同步失败 exit=%d tail=%s",
-                proc.returncode, lines[-5:] if lines else [],
-            )
-    except Exception as e:  # noqa: BLE001
-        out["steps"]["tredict_sync"] = f"failed: {e}"
-        logger.error("Tredict 同步异常: %s", e)
-    return out
+        with session_scope() as session:
+            return run_tredict_sync(session, settings)
+    except Exception as e:  # noqa: BLE001 — 兜底，绝不崩调度器进程
+        logger.error("Tredict 同步任务异常: %s", e)
+        return {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
 
 
 def run_monthly_job() -> dict:

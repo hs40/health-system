@@ -1,21 +1,15 @@
-"""Tredict 同步 + 云端校验调度任务测试（V42）。
+"""Tredict 同步调度任务测试（V43）。
 
-背景：
-    NAS 容器 ``build_scheduler()`` 只有 daily(07:30)/sleep_retry/weekly/monthly，
-    **缺失活动上传到 Tredict 的调度任务**——活动上传只存在于独立脚本
-    ``daily_sync.py --profile activity``，此前从本地开发机手动运行，10-26 后停止。
-    同时 ``verify_cloud.py`` 也未进容器调度器，Garmin↔Tredict 差异无人检测。
+Q4 确认的 seam 之一：``build_scheduler()`` 必须注册 23:00 的 tredict_sync job，
+且 ``run_tredict_sync_job`` 直调 app 内服务（不再是 V42 的 subprocess 调脚本）。
 
-本测试覆盖：
-- config 新增 ``tredict_sync_cron``（默认 ``0 23 * * *``）；
-- ``build_scheduler()`` 包含 ``id='tredict_sync'`` 的 job；
-- ``run_tredict_sync_job()`` 调用 ``daily_sync.py --profile all``（活动+健康+校验）；
-- 子进程失败 / 异常时不崩溃调度器。
+服务行为（真上传 / 路径 / audit / 告警）见 ``test_tredict_sync_service.py``；
+本文件只管「调度注册」与「调度器兜底不崩」。
 """
 
 from __future__ import annotations
 
-import subprocess
+from contextlib import contextmanager
 
 
 # ============================================================
@@ -43,15 +37,14 @@ def test_scheduler_has_tredict_sync_job():
 
 def test_tredict_sync_job_cron_is_23():
     """tredict_sync job 的触发器在 23:00 触发。"""
+    from apscheduler.triggers.cron import CronTrigger
+
     from app.orchestrator.scheduler import build_scheduler
 
     sched = build_scheduler()
     job = sched.get_job("tredict_sync")
     assert job is not None
     trigger = job.trigger
-    # CronTrigger.fields 是一个列表，按 crontab 字段顺序：分 时 日 月 周
-    from apscheduler.triggers.cron import CronTrigger
-
     assert isinstance(trigger, CronTrigger)
     fields = {f.name: str(f) for f in trigger.fields}
     assert fields["hour"] == "23"
@@ -59,57 +52,38 @@ def test_tredict_sync_job_cron_is_23():
 
 
 # ============================================================
-# run_tredict_sync_job
+# run_tredict_sync_job：直调服务 + 兜底不崩
 # ============================================================
-class _FakeProc:
-    def __init__(self, returncode=0, stdout="", stderr=""):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+def test_job_result_is_service_result(monkeypatch, tmp_path):
+    """调度器把服务结果原样返回（不再包一层 steps/exit 码）。"""
+    from app.orchestrator import scheduler as sched
+    from app.services import tredict_sync_service as svc
+
+    sentinel = {"ok": True, "activities": {"uploaded": ["42"]}}
+
+    @contextmanager
+    def _scope():
+        yield object()  # 服务被 mock，session 不会被真正使用
+
+    monkeypatch.setattr(sched, "session_scope", _scope)
+    monkeypatch.setattr(sched, "get_settings", lambda: object())
+    monkeypatch.setattr(svc, "run_tredict_sync", lambda sess, st, **kw: sentinel)
+
+    assert sched.run_tredict_sync_job() == sentinel
 
 
-def test_tredict_sync_job_calls_daily_sync_all(monkeypatch):
-    """``run_tredict_sync_job`` 调用 ``daily_sync.py --profile all``。"""
-    captured: dict = {}
+def test_job_exception_never_crashes_scheduler(monkeypatch):
+    """服务/DB 抛异常时调度器返回 ok:False，绝不把异常抛穿进程。"""
+    from app.orchestrator import scheduler as sched
 
-    def fake_run(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        captured["cwd"] = kwargs.get("cwd")
-        return _FakeProc(0, "[daily] 全部完成", "")
+    @contextmanager
+    def _boom():
+        raise RuntimeError("db down")
+        yield  # pragma: no cover
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sched, "session_scope", _boom)
+    monkeypatch.setattr(sched, "get_settings", lambda: object())
 
-    from app.orchestrator.scheduler import run_tredict_sync_job
-
-    result = run_tredict_sync_job()
-
-    cmd = captured["cmd"]
-    assert any("daily_sync.py" in c for c in cmd), f"cmd 缺少 daily_sync.py: {cmd}"
-    assert "--profile" in cmd
-    idx = cmd.index("--profile")
-    assert cmd[idx + 1] == "all", f"--profile 值不是 all: {cmd}"
-    assert result["steps"]["tredict_sync"] == "ok"
-
-
-def test_tredict_sync_job_nonzero_exit(monkeypatch):
-    """子进程 exit!=0 时返回 exit:N，不抛异常。"""
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _FakeProc(1, "fail", "boom"))
-
-    from app.orchestrator.scheduler import run_tredict_sync_job
-
-    result = run_tredict_sync_job()
-    assert "exit:1" in result["steps"]["tredict_sync"]
-
-
-def test_tredict_sync_job_handles_exception(monkeypatch):
-    """子进程启动异常时不抛出，返回 failed 状态。"""
-
-    def _raise(*a, **kw):
-        raise OSError("spawn failed")
-
-    monkeypatch.setattr(subprocess, "run", _raise)
-
-    from app.orchestrator.scheduler import run_tredict_sync_job
-
-    result = run_tredict_sync_job()
-    assert "failed" in result["steps"]["tredict_sync"]
+    out = sched.run_tredict_sync_job()
+    assert out["ok"] is False
+    assert out["errors"]
