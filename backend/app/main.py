@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import data, environment, messages, ops, plans, reports, strategy
+from app.api import activities, data, environment, messages, ops, plans, reports, strategy
 from app.config import get_settings
 from app.db.session import init_db
 from app.errors import AppError
@@ -65,3 +65,4 @@ app.include_router(ops.router, prefix="/api")
 app.include_router(environment.router, prefix="/api")
 app.include_router(strategy.router, prefix="/api")
 app.include_router(messages.router, prefix="/api")
+app.include_router(activities.router, prefix="/api")

@@ -58,6 +58,10 @@ dist-images/
 docs/
 /健康运动管理系统首期开发项目需求报告.md
 /健康运动管理系统新增二期需求报告.md
+/健康运动管理系统项目三期开发需求报告.md
+# 本地参考素材（用户提供 / 下载，非代码资产，避免 git add -A 误入库）
+/GARMIN CONNECT EXERCICES.xlsx
+/muscle-heat-map-labelled-diagram-v0-r9wkjzo4sekg1.webp
 
 # 编辑器
 .vscode/

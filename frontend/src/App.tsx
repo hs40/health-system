@@ -18,6 +18,8 @@ const Plan12wPage = lazy(() => import('./pages/Plan12wPage'))
 const OpsPage = lazy(() => import('./pages/OpsPage'))
 const DataPage = lazy(() => import('./pages/DataPage'))
 const LoadPage = lazy(() => import('./pages/LoadPage'))
+const TrainingPage = lazy(() => import('./pages/training/TrainingPage'))
+const TrainingDetailPage = lazy(() => import('./pages/training/TrainingDetailPage'))
 
 const NAV = [
   { to: '/daily', label: '日报' },
@@ -27,6 +29,7 @@ const NAV = [
   { to: '/plan12w', label: '12 周计划' },
   { to: '/data', label: '数据趋势' },
   { to: '/load', label: '训练负荷' },
+  { to: '/training', label: '运动训练' },
 ]
 
 type DrawerKind = 'env' | 'messages' | 'ops'
@@ -101,6 +104,8 @@ export default function App() {
             <Route path="/plan12w" element={<Plan12wPage />} />
             <Route path="/data" element={<DataPage />} />
             <Route path="/load" element={<LoadPage />} />
+            <Route path="/training" element={<TrainingPage />} />
+            <Route path="/training/detail" element={<TrainingDetailPage />} />
             {/* 已取消的页面：旧链接回到日报 */}
             <Route path="/strategy" element={<Navigate to="/daily" replace />} />
             <Route path="/strategy-compare" element={<Navigate to="/daily" replace />} />

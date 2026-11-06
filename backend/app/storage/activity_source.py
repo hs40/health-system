@@ -138,4 +138,46 @@ def load_laps(raw_root: Path, activity_id: str) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["ActivityRef", "load_activities", "load_laps", "load_sets"]
+def load_fit_messages(
+    raw_root: Path,
+    activity_id: str,
+    types: set[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """一次解压 FIT jsonl，按消息类型分组（详情页一次拿齐所需消息）。
+
+    ``types`` 为 ``None`` 时保留全部类型；指定时只保留给定类型。
+    坏行、非 dict 的 ``d`` 一律跳过 —— raw 是外部来源，容忍脏数据比崩溃重要。
+    """
+    path = Path(raw_root) / "fit_jsonl" / f"{activity_id}.jsonl.gz"
+    out: dict[str, list[dict[str, Any]]] = {}
+    if not path.exists():
+        return out
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                m = obj.get("m")
+                if not isinstance(m, str):
+                    continue
+                if types is not None and m not in types:
+                    continue
+                d = obj.get("d")
+                if isinstance(d, dict):
+                    out.setdefault(m, []).append(d)
+    except (OSError, EOFError):
+        return out
+    return out
+
+
+__all__ = [
+    "ActivityRef",
+    "load_activities",
+    "load_fit_messages",
+    "load_laps",
+    "load_sets",
+]

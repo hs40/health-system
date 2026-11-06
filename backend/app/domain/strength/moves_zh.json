@@ -1,7 +1,7 @@
 {
   "_comment": "Garmin 力量动作 → 中文名映射表。键格式: 'CATEGORY/SUBCATEGORY'（subCategory 为空时用 'CATEGORY/'）。未命中的键会回退英文原名。新增动作时直接在 moves 里追加即可。",
-  "_version": "1.0",
-  "_source": "由本地 64 个力量训练活动统计生成（2026-10-08）",
+  "_version": "1.1",
+  "_source": "力量动作由本地 64 个力量训练活动统计生成（2026-10-08）；HIIT 动作由 9 个 HIIT 活动的 FIT set / summarizedExerciseSets 枚举补全（2026-11-05）",
   "moves": {
     "LUNGE/SIDE_LUNGE": "侧弓步",
     "LUNGE/OVERHEAD_BULGARIAN_SPLIT_SQUAT": "过顶保加利亚分腿蹲",
@@ -91,6 +91,22 @@
     "WARM_UP/STRETCH_HAMSTRING": "腘绳肌拉伸(热身)",
     "WARM_UP/STANDING_HAMSTRING_STRETCH": "站姿腘绳肌拉伸(热身)",
     "WARM_UP/GLUTES_STRETCH": "臀部拉伸(热身)",
+    "WARM_UP/STRETCH_FORWARD_GLUTES": "站姿前屈臀部拉伸(热身)",
+    "WARM_UP/STRETCH_ABS": "腹部拉伸(热身)",
+    "WARM_UP/WALKING_HIGH_KNEES": "行进高抬膝(热身)",
+    "WARM_UP/FORWARD_AND_BACKWARD_LEG_SWINGS": "前后摆腿(热身)",
+    "WARM_UP/SIDE_TO_SIDE_LEG_SWINGS": "左右摆腿(热身)",
+    "RUN/": "跑步",
+    "RUN/RUN": "跑步",
+    "RUN/JOG": "慢跑",
+    "RUN/WALK": "步行",
+    "CARDIO/JUMPING_JACKS": "开合跳",
+    "PLANK/MOUNTAIN_CLIMBER": "登山者",
+    "PLANK/MOUNTAIN_CLIMBER_WITH_HANDS_ON_BENCH": "撑凳登山者",
+    "CORE/": "核心训练",
+    "CORE/RUSSIAN_TWIST": "俄罗斯转体",
+    "CRUNCH/": "卷腹",
+    "CRUNCH/STANDING_SIDE_CRUNCH": "站姿侧卷腹",
     "WARM_UP/": "热身"
   }
 }
