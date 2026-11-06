@@ -169,25 +169,36 @@ class TestProxyScriptAuth:
         )
 
 
-# ---------- 默认标签应为 latest（发版手动钉版本） ----------
+# ---------- 部署必须显式钉版本（缺失 HS_TAG 即报错） ----------
 
-class TestDefaultTagIsLatest:
-    """compose 与部署脚本的默认标签应为 latest，发版时通过 HS_TAG 钉具体版本。
+class TestExplicitTagRequired:
+    """compose 与部署脚本不得自带默认标签，未给 HS_TAG 时必须报错退出。
 
-    防止回退到硬编码的具体版本号（如 v1.0.8），否则不指定 HS_TAG 时会
-    拉到过期镜像。
+    防止静默回退到 latest：latest 由 push main 持续覆盖，不带版本号部署
+    既无法追溯也无法回滚。发版必须显式传 HS_TAG=vX.Y.Z。
     """
 
-    def test_compose_default_tag_is_latest(self):
-        """docker-compose.single.yml 默认标签为 latest。"""
+    def test_compose_requires_explicit_hs_tag(self):
+        """docker-compose.single.yml 用 :? 强制 HS_TAG，不回退 latest。"""
         content = _read(REPO_ROOT / "docker-compose.single.yml")
-        assert "${HS_TAG:-latest}" in content, (
-            "compose 默认标签应指向 latest，发版时通过 HS_TAG 钉具体版本"
+        assert "${HS_TAG:?" in content, (
+            "compose 必须用 ${HS_TAG:?...} 强制显式指定版本，缺失即报错"
         )
+        assert "${HS_TAG:-latest}" not in content, "不得保留静默回退 latest 的默认值"
 
-    def test_deploy_script_default_tag_is_latest(self):
-        """nas_deploy_single.sh 默认标签为 latest。"""
+    def test_deploy_script_requires_explicit_hs_tag(self):
+        """nas_deploy_single.sh 用 :? 强制 HS_TAG，不回退 latest。"""
         content = _read(REPO_ROOT / "deploy" / "nas_deploy_single.sh")
-        assert 'TAG="${HS_TAG:-latest}"' in content, (
-            "nas_deploy_single.sh 默认标签应为 latest"
+        assert 'TAG="${HS_TAG:?' in content, (
+            "部署脚本必须用 ${HS_TAG:?...} 强制显式指定版本，缺失即报错"
+        )
+        assert 'TAG="${HS_TAG:-latest}"' not in content, "不得保留静默回退 latest 的默认值"
+
+    def test_pack_data_uses_current_deploy_method(self):
+        """保留的 pack_data.sh 不得再引用已删除的三容器旧方法。"""
+        content = _read(REPO_ROOT / "scripts" / "pack_data.sh")
+        for stale in ("docker-compose.nas.yml", "nas_deploy.sh", "18000"):
+            assert stale not in content, f"pack_data.sh 仍残留旧部署方法引用: {stale}"
+        assert "nas_deploy_single.sh" in content, (
+            "pack_data.sh 的 NAS 侧提示应指向现行单容器部署脚本"
         )

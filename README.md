@@ -3,11 +3,11 @@
 本地优先的个人健康运动管理系统：Garmin 数据同步 → 数据质量校验 → AI 教练分析 → 训练计划生成 → 风险拦截 → 周期报告。
 
 - **技术路线：** 路线 C 全 Python（FastAPI + python-garminconnect + React）
-- **部署宿主：** 群晖 DS220+（Docker Compose）
+- **部署宿主：** 群晖 DS220+（单容器 Docker Compose，镜像来自 ghcr.io）
 - **需求基线：** [`健康运动管理系统首期开发项目需求报告.md`](./健康运动管理系统首期开发项目需求报告.md)、[`健康运动管理系统新增二期需求报告.md`](./健康运动管理系统新增二期需求报告.md)
 - **未完成事项总账（唯一入口）：** [`docs/待验证事项.md`](./docs/待验证事项.md)
 
-> **注：** `docs/` 与两份需求报告**仅存本地、不纳入版本库**（含个人健康数据、居住地与内网拓扑信息）。
+> **注：** `docs/` 与三份需求报告**仅存本地、不纳入版本库**（含个人健康数据、居住地与内网拓扑信息）。
 > 本文中指向 `docs/` 的链接**仅在本地有效**；远端仓库只含代码。
 
 ## 目录结构
@@ -28,26 +28,72 @@ Health System/
 ├─ frontend/                React + Vite + TS + Tailwind
 │  └─ src/{api,components,pages}
 ├─ data/                    挂载卷（raw 只读 / db / audit / garmin_tokens）
-├─ scripts/                 脚本（dev.sh 本地启动、nas_deploy.sh、pack_data.sh 等）
+├─ scripts/                 脚本（dev.sh 本地启动、pack_data.sh 数据同步等）
 ├─ docs/                    现行文档（14 份）
 │  └─ archive/              已完成使命的历史文档（只读存档）
 ├─ dev.cmd                  双击启动本地前后端（调用 scripts/dev.sh）
-├─ docker-compose.yml         三容器（backend + scheduler + frontend）
 ├─ docker-compose.single.yml  单容器 hs-app（nginx + uvicorn + scheduler，supervisord 托管）
-├─ deploy/                    单容器镜像与编排（Dockerfile.single / supervisord / nginx）
+├─ deploy/                    单容器镜像与部署（Dockerfile.single / nas_deploy_single.sh / nginx / supervisord）
+├─ .github/workflows/         CI：构建并推送镜像到 ghcr.io
 └─ .env.example
 ```
 
-## 快速开始（Docker）
+## 部署（唯一现行方法）
+
+镜像由 GitHub Actions 构建并推送到 **ghcr.io**，NAS 从仓库拉取**单容器**镜像运行。
+早期的「本地导出 tar → scp → docker load → 三容器」方案已废弃，相关脚本与编排已删除。
+
+### 构建与发版
+
+| 触发 | 产出镜像标签 |
+|---|---|
+| `git push origin main`（日常） | `:latest` + `:sha-<短哈希>` |
+| `git push origin vX.Y.Z`（正式发版） | `:vX.Y.Z` + `:latest` |
+
+**正式发版必须打 git tag 并钉版本**，否则部署没有可追溯、可回滚的版本号：
 
 ```bash
-cp .env.example .env      # 填写 Garmin / Tredict / DeepSeek 凭据
-docker compose up -d --build
-# 前端 http://<NAS-IP>:8080  后端 http://<NAS-IP>:8000/api/ops/health
+# 1. 本地：代码合入 main 后打 tag（主版本对齐「期」，如三期 v3.0.0）
+git tag v3.0.0
+git sync                 # = git push origin main
+git push origin v3.0.0   # 触发 CI 构建 v3.0.0 镜像
+# 2. 等 GitHub Actions（.github/workflows/build-and-push.yml）构建成功
+# 3. NAS 上以 root 部署（见下）
 ```
 
-> 群晖**单容器**部署（`hs-app`，三进程 supervisord 托管）见 `docs/部署与回滚.md` **§19**；
-> 该模式下 `docker ps` 查不到 `hs-scheduler` 属正常，排障请用 `docker exec hs-app supervisorctl status`。
+版本号规则：`v<期>.<功能>.<修复>`，三期后续走 `v3.0.1` / `v3.1.0`；历史 `v1.0.8~10` 保留不删。
+
+### NAS 部署
+
+SSH `hs40@192.168.2.2:222`，进入部署目录 `/volume1/docker/health-system/`（内含
+`docker-compose.single.yml`、`.env`、`secrets/`、部署脚本），以 **root** 执行：
+
+```bash
+sudo -i
+cd /volume1/docker/health-system
+HS_TAG=v3.0.0 bash nas_deploy_single.sh
+```
+
+`HS_TAG` **必填**：compose 与脚本均用 `${HS_TAG:?...}`，缺失直接报错退出，不会静默
+回退 `latest`（`latest` 由 push main 持续覆盖，不带版本号无法追溯、无法回滚）。
+
+脚本自动完成：`docker pull` → 端口检查 → `docker rm -f hs-app` → `compose up -d` →
+最多 120s 健康检查。所有持久数据在 `./data` 挂载卷，**重建容器不丢数据**。
+访问 `http://<NAS-IP>:18080/`；健康检查 `curl -fsS http://127.0.0.1:18080/api/ops/health`。
+
+> 该模式下 `docker ps` 查不到 `hs-scheduler` 属正常（三进程由 supervisord 托管），
+> 排障用 `docker exec hs-app supervisorctl status`。ghcr.io 包为 Public，一般无需
+> `docker login`；若拉取失败，在 root 下 `docker login ghcr.io -u hs40 -p <PAT>`。
+> 可选加速：`deploy/setup_nas_proxy.sh` 配 Docker daemon 代理。
+
+### 回滚
+
+```bash
+cd /volume1/docker/health-system
+HS_TAG=v1.0.10 bash nas_deploy_single.sh   # 按标签回滚，秒级、不重新构建、不动 data/
+```
+
+> 数据重灌（把本机 `data/` 同步到 NAS）用 `scripts/pack_data.sh`，与镜像发版是两件事。
 
 ## 本地开发
 

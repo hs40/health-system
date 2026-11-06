@@ -11,14 +11,16 @@
 #
 # 用法：
 #   ./scripts/pack_data.sh                              # 仅打包 → dist-images/data-<日期>.tar.gz
-#   ./scripts/pack_data.sh <nas_host>                   # 打包 + scp（默认用户 admin，目标 /volume1/docker/health-system）
+#   ./scripts/pack_data.sh <nas_host>                   # 打包 + scp（默认用户 hs40，目标 /volume1/docker/health-system）
 #   ./scripts/pack_data.sh <nas_host> <user> [remote_dir]
 #
 # 例：
-#   ./scripts/pack_data.sh 192.168.1.10
-#   ./scripts/pack_data.sh 192.168.1.10 myname /volume1/docker/health-system
+#   ./scripts/pack_data.sh 192.168.2.2
+#   ./scripts/pack_data.sh 192.168.2.2 hs40 /volume1/docker/health-system
 #
-# 打包后 NAS 侧操作见 docs/NAS部署指南.md §13。
+# 注：脚本内 scp 走默认 22 端口；若 NAS SSH 端口为 222，请用
+#     File Station / SMB 传输，或手工 `scp -P 222 ...`。
+# 打包后 NAS 侧操作见 README.md「部署」章节（现行单容器 ghcr.io 方案）。
 # ============================================================
 set -euo pipefail
 
@@ -30,7 +32,7 @@ STAMP="$(date +%Y%m%d-%H%M)"
 TARBALL="${OUT_DIR}/data-${STAMP}.tar.gz"
 
 NAS_HOST="${1:-}"
-NAS_USER="${2:-admin}"
+NAS_USER="${2:-hs40}"
 NAS_DIR="${3:-/volume1/docker/health-system}"
 
 log() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
@@ -97,12 +99,12 @@ if [ -n "$NAS_HOST" ]; then
 
   接下来在 NAS 上执行（SSH，注意 sudo）：
     cd ${NAS_DIR}
-    sudo docker compose -f docker-compose.nas.yml down      # 先停，释放 DB 文件句柄
+    sudo docker compose -f docker-compose.single.yml down   # 先停，释放 DB 文件句柄
     tar -xzf $(basename "$TARBALL")                          # 覆盖 data/
-    sudo ./scripts/nas_deploy.sh up v1.0.1                  # 重启并健康检查
-    curl -s http://127.0.0.1:18000/api/ops/health
+    sudo HS_TAG=v3.0.0 bash nas_deploy_single.sh            # 按版本重建并健康检查
+    curl -s http://127.0.0.1:18080/api/ops/health
 
-  详见 docs/NAS部署指南.md §13。
+  详见 README.md「部署」章节。
 EOF
 else
   cat <<EOF
@@ -110,7 +112,7 @@ else
   ✅ 打包完成（未指定 NAS 主机，故未传输）。
   下一步（任选其一传输）：
     ① 重新带上主机名（推荐）：./scripts/pack_data.sh <nas_host>
-    ② 手工 scp：scp ${TARBALL} admin@<NAS-IP>:${NAS_DIR}/
-    ③ File Station / SMB 拖拽：把 ${TARBALL} 传到 ${NAS_DIR}/ 后按 §13 解压
+    ② 手工 scp：scp -P 222 ${TARBALL} hs40@<NAS-IP>:${NAS_DIR}/
+    ③ File Station / SMB 拖拽：把 ${TARBALL} 传到 ${NAS_DIR}/ 后按 README 部署章节解压
 EOF
 fi

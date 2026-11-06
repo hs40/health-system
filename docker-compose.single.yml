@@ -1,20 +1,23 @@
 # ============================================================
 # 健康运动管理系统 · 单容器部署（NAS / 本机通用）
 #
-# 与 docker-compose.nas.yml 的区别：三个服务合并为 1 个容器（hs-app），
-# 仅暴露 1 个宿主端口，资源护栏按「三进程合体」重新设定。
+# 单容器方案：nginx + uvicorn + scheduler 合并为 1 个容器（hs-app，supervisord
+# 托管），仅暴露 1 个宿主端口，替代早期的三容器编排（已删除）。
+# 镜像由 GitHub Actions 构建推 ghcr.io，部署见 deploy/nas_deploy_single.sh。
 #
-# 用法：
-#   docker compose -f docker-compose.single.yml up -d
-#   docker compose -f docker-compose.single.yml ps
-#   docker compose -f docker-compose.single.yml logs -f
+# 用法（必须显式指定版本，缺失 HS_TAG 会报错）：
+#   HS_TAG=v3.0.0 docker compose -f docker-compose.single.yml up -d
+#   HS_TAG=v3.0.0 docker compose -f docker-compose.single.yml ps
+#   HS_TAG=v3.0.0 docker compose -f docker-compose.single.yml logs -f
 #
 # 访问：http://<NAS_IP>:18080/
 # ============================================================
 
 services:
   app:
-    image: ghcr.io/hs40/health-system:${HS_TAG:-latest}
+    # 必须显式指定版本（如 HS_TAG=v3.0.0）；缺失直接报错，不静默回退 latest。
+    # latest 由 push main 持续覆盖，不带版本号部署无法追溯、无法回滚。
+    image: ghcr.io/hs40/health-system:${HS_TAG:?请显式指定 HS_TAG，例如 HS_TAG=v3.0.0}
     container_name: hs-app
     env_file: .env
     environment:

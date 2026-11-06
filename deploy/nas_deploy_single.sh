@@ -4,9 +4,9 @@
 #
 # 从 ghcr.io 拉取镜像并部署，不再依赖本地 tar 包。
 #
-# 用法：
+# 用法（必须显式钉版本）：
 #   cd /volume1/docker/health-system
-#   sudo bash nas_deploy_single.sh
+#   sudo HS_TAG=v3.0.0 bash nas_deploy_single.sh
 #
 # 前置（本脚本同目录）：
 #   - docker-compose.single.yml
@@ -18,15 +18,16 @@
 #   1. 配置 Docker daemon 代理（systemd drop-in）
 #   2. docker login ghcr.io -u hs40 -p <PAT>（PAT 需 read:packages 权限）
 #
-# 可选环境变量：
-#   HS_TAG=latest       镜像标签（默认 latest；发版时改 v1.0.x 钉具体版本）
-#   HS_APP_PORT=18080   宿主端口
+# 环境变量：
+#   HS_TAG=vX.Y.Z       **必填**镜像版本标签（如 v3.0.0）；缺失直接报错退出，
+#                       不静默回退 latest —— 发版必须钉版本才可追溯、可回滚。
+#   HS_APP_PORT=18080   宿主端口（可选，默认 18080）
 # ============================================================
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-TAG="${HS_TAG:-latest}"
+TAG="${HS_TAG:?请显式指定 HS_TAG，例如：HS_TAG=v3.0.0 bash nas_deploy_single.sh}"
 PORT="${HS_APP_PORT:-18080}"
 IMAGE="ghcr.io/hs40/health-system:${TAG}"
 
