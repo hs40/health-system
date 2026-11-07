@@ -39,18 +39,68 @@ LOGGER_NAMESPACES: tuple[str, ...] = (
 #: 格式化模板：`[task_id@date]` 紧邻渲染。
 #: 不写成 ``%(asctime)s ... [%(task_id)s] ... %(date)s``——那会让「date 只来自
 #: message 正文」时测试假绿；绑定在一起才是一个可断言的整体。
-LOG_FORMAT = "%(asctime)s %(levelname)s [%(task_id)s@%(date)s] %(name)s %(message)s"
+#:
+#: ``%(request_id)s`` 单独一段（不并进 ``[...]``）：调度任务没有 request_id，
+#: 并进去会让每条定时日志都渲染一个空占位。渲染为空串时整段消失，不留空白。
+LOG_FORMAT = (
+    "%(asctime)s %(levelname)s [%(task_id)s@%(date)s] %(name)s "
+    "%(request_id_part)s%(message)s"
+)
 
-#: 上下文缺失时的占位（过滤器保证这两个 key 一定存在，模板才不会 KeyError）。
+#: 上下文缺失时的占位（过滤器保证这些 key 一定存在，模板才不会 KeyError）。
 _NO_TASK = "-"
+
+#: 请求关联 ID 的头名。Nginx 生成/透传，后端读取；前端每个请求都带。
+#: 用 ``X-Request-ID``（业界通用）而非 ``X-Request-Id``——HTTP 头名大小写不敏感，
+#: 但日志里 grep 的字符串必须固定。
+REQUEST_ID_HEADER = "X-Request-ID"
+
+__all__ = [
+    "REQUEST_ID_HEADER",
+    "LOG_FORMAT",
+    "LOGGER_NAMESPACES",
+    "ContextFilter",
+    "log_context",
+    "normalize_request_id",
+    "setup_logging",
+]
+
+#: 合法的 request_id 字符集：只允许 ``[A-Za-z0-9._:-]``，长度上限 128。
+#: 原因：这个值会从外部头直接进日志（潜在 CRLF 注入 / 日志伪造）与响应头
+#: （响应头不能含控制字符，否则 uvicorn 会抛错）。非法值一律**丢弃并重新生成**，
+#: 而不是清洗——清洗后可能与上游的 ID 撞车，反而更难排查。
+#: 刻意窄于「ASCII 可见字符」：真正需要跨越的 ID 都是 UUID / 十六进制 / 带分隔符
+#: 的短串，放行空格与引号只会让日志里的 grep 变难。
+_REQUEST_ID_MAX_LEN = 128
+_REQUEST_ID_ALLOWED = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+)
+
+
+def normalize_request_id(raw: str | None) -> str | None:
+    """校验外部传入的 request_id；不合法返回 ``None`` 交给调用方重新生成。"""
+    if not raw or len(raw) > _REQUEST_ID_MAX_LEN:
+        return None
+    if not set(raw) <= _REQUEST_ID_ALLOWED:
+        return None
+    return raw
+
 
 _task_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("task_id", default=_NO_TASK)
 _date_var: contextvars.ContextVar[str] = contextvars.ContextVar("date", default=_NO_TASK)
+_request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default=_NO_TASK
+)
 
 
 @contextlib.contextmanager
-def log_context(*, task_id: str | None = None, date: object | None = None) -> Iterator[None]:
-    """在 ``with`` 块内为所有日志附加 ``task_id`` / ``date``。
+def log_context(
+    *,
+    task_id: str | None = None,
+    date: object | None = None,
+    request_id: str | None = None,
+) -> Iterator[None]:
+    """在 ``with`` 块内为所有日志附加 ``task_id`` / ``date`` / ``request_id``。
 
     ``date`` 接受 ``datetime.date`` 或任意可 ``str()`` 的值，统一成 ISO 字符串。
     退出时恢复上一层上下文（可嵌套）。
@@ -60,6 +110,8 @@ def log_context(*, task_id: str | None = None, date: object | None = None) -> It
         tokens.append((_task_id_var, _task_id_var.set(task_id)))
     if date is not None:
         tokens.append((_date_var, _date_var.set(str(date))))
+    if request_id is not None:
+        tokens.append((_request_id_var, _request_id_var.set(request_id)))
     try:
         yield
     finally:
@@ -68,7 +120,7 @@ def log_context(*, task_id: str | None = None, date: object | None = None) -> It
 
 
 class ContextFilter(logging.Filter):
-    """把 contextvar 里的 ``task_id`` / ``date`` 搬到 LogRecord 上。
+    """把 contextvar 里的 ``task_id`` / ``date`` / ``request_id`` 搬到 LogRecord 上。
 
     过滤器挂在 handler 上而不是 logger 上：挂 logger 时子 logger 的 record
     不会经过父 logger 的 filter（只经过父 handler），会漏。
@@ -77,6 +129,10 @@ class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.task_id = _task_id_var.get()
         record.date = _date_var.get()
+        rid = _request_id_var.get()
+        # 模板里 request_id 单独一段，无上下文时渲染成空串（整段消失）。
+        record.request_id = rid
+        record.request_id_part = "" if rid == _NO_TASK else f"[req {rid}] "
         return True
 
 

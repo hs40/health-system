@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.db.session import init_db
 from app.errors import AppError
 from app.logging_conf import setup_logging
+from app.middleware.request_id import RequestIdMiddleware
 
 logger = logging.getLogger("hs.api")
 
@@ -43,12 +44,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 中间件是「后加的先包在外层」。RequestId 必须最外层：这样 CORS 预检、404、
+# 以及其它中间件抛出的异常，其日志与响应头都带得上 request_id。
+# CORS 外露 X-Request-ID，跨源时前端也能在 ApiError 里读到它。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 本地单用户；生产可由 Nginx 同源代理
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(RequestIdMiddleware)
 
 
 @app.exception_handler(AppError)
