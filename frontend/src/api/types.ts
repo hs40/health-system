@@ -132,6 +132,10 @@ export interface DailyReport {
   limitations: string[]
   /** 面向用户的建议：P1 恢复日提示 / P3 加量幅度（Q6 / Q22） */
   advisory?: string[]
+  /** 报告与策略版本关联（后端 §11.1 / T4.1）。旧报告为 null */
+  strategy?: Record<string, unknown> | null
+  /** 本报告使用的口径版本（acwr/quality/aggregation）。旧 payload 为空对象，读作 legacy */
+  algo_versions?: Record<string, string>
   version: number
 }
 

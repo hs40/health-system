@@ -11,11 +11,21 @@ import type { DailyReport, LoadSeriesResponse, MonthlyReport, WeeklyReport } fro
 import { loadSeriesKey } from '../lib/loadSeries'
 import type { IndexItem } from '../lib/reports'
 
+/**
+ * 报告数据的默认新鲜度。
+ *
+ * 报告由每日 cron 生成、用户手动点「生成/重新分析」才变化，本身不是实时数据。
+ * 之前这些 query 没设 staleTime，用全局默认 0s —— 每次切页再切回都要重新请求
+ * 4-5 个接口。60s 与 `useReportIndex` / `usePushEnabled` 一致；
+ * 手动操作后会走 `invalidateReport` 强制失效，不影响「改完立刻看到新结果」。
+ */
+const REPORT_STALE_MS = 60_000
+
 export function useReportIndex(kind: 'daily' | 'weekly' | 'monthly') {
   return useQuery<{ kind: string; items: IndexItem[]; count: number }>({
     queryKey: ['reportIndex', kind],
     queryFn: () => api.get(`/api/reports/index?kind=${kind}`),
-    staleTime: 60_000,
+    staleTime: REPORT_STALE_MS,
     retry: false,
   })
 }
@@ -24,6 +34,7 @@ export function useDaily(date: string) {
   return useQuery<DailyReport>({
     queryKey: ['daily', date],
     queryFn: () => api.get(`/api/reports/daily?date=${date}`),
+    staleTime: REPORT_STALE_MS,
     retry: false,
   })
 }
@@ -32,6 +43,7 @@ export function useWeekly(weekStart: string) {
   return useQuery<WeeklyReport>({
     queryKey: ['weekly', weekStart],
     queryFn: () => api.get(`/api/reports/weekly?week_start=${weekStart}`),
+    staleTime: REPORT_STALE_MS,
     retry: false,
   })
 }
@@ -40,6 +52,7 @@ export function useMonthly(month: string) {
   return useQuery<MonthlyReport>({
     queryKey: ['monthly', month],
     queryFn: () => api.get(`/api/reports/monthly?month=${month}`),
+    staleTime: REPORT_STALE_MS,
     retry: false,
   })
 }
@@ -49,6 +62,7 @@ export function useLoadSeries(from: string, to: string) {
   return useQuery<LoadSeriesResponse>({
     queryKey: loadSeriesKey(from, to),
     queryFn: () => api.get(`/api/data/load-series?from=${from}&to=${to}`),
+    staleTime: REPORT_STALE_MS,
     retry: false,
   })
 }
