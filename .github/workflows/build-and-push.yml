@@ -21,7 +21,9 @@ env:
 
 jobs:
   # 质量门禁：镜像构建的前置条件（ARCHITECTURE_REVIEW A.9.1）。
-  # 测试/静态检查/前端类型检查任一失败 → build-and-push 不启动，杜绝「没跑测试也能发版」。
+  # ruff + pytest 任一失败 → build-and-push 不启动，杜绝「没跑测试也能发版」。
+  # 前端类型检查由 Dockerfile.single stage 1 的 `npm run build` 覆盖（含 tsc --noEmit），
+  # 不在 quality job 中重复——避免平台差异导致的 false negative 阻塞发版。
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -46,21 +48,6 @@ jobs:
       - name: Pytest
         run: python -m pytest tests/ -q
         working-directory: backend
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install frontend deps
-        # 用 npm install 而非 npm ci：与 Dockerfile.single stage 1 保持一致，
-        # 确保 CI runner（Linux）正确安装平台特定的 optional dependencies。
-        run: npm install --no-audit --no-fund
-        working-directory: frontend
-
-      - name: Frontend build (type check)
-        run: npm run build
-        working-directory: frontend
 
   build-and-push:
     needs: quality

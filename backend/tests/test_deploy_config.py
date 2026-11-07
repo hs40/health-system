@@ -228,17 +228,24 @@ class TestCiQualityGate:
             "build-and-push 未声明 needs: quality —— 质量门禁失败仍会发布镜像"
         )
 
-    def test_quality_runs_backend_tests(self):
-        text = self._workflow_text()
-        assert "pytest" in text, "quality job 未运行 pytest"
-
     def test_quality_runs_ruff(self):
         text = self._workflow_text()
         assert "ruff check" in text, "quality job 未运行 ruff check"
 
-    def test_quality_runs_frontend_build(self):
+    def test_quality_runs_pytest(self):
         text = self._workflow_text()
-        assert "npm run build" in text, "quality job 未运行前端构建（类型检查）"
+        assert "pytest" in text, "quality job 未运行 pytest"
+
+    def test_dockerfile_runs_frontend_build(self):
+        """前端类型检查由 Dockerfile.single stage 1 覆盖（tsc --noEmit + vite build）。
+
+        quality job 不重复前端 build —— CI runner 与开发机的平台差异会导致
+        false negative 阻塞发版。Dockerfile 在 v3.0.0/v3.0.1 CI 中已验证可工作。
+        """
+        dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
+        assert "npm run build" in dockerfile, (
+            "Dockerfile.single stage 1 必须运行 npm run build（含 tsc --noEmit）"
+        )
 
 
 # ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
