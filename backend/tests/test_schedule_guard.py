@@ -169,8 +169,6 @@ def test_upload_with_schedule_true_schedules(monkeypatch, session, settings):
 def test_daily_job_uploads_without_schedule(monkeypatch, session):
     """自动日任务以 ``schedule=False`` 上传（每日计划不排期）。"""
     from app.orchestrator import scheduler as sched_mod
-    from app.services import coach_service, daily_pipeline
-    from app.services import plan_service as ps
 
     captured: dict = {}
 
@@ -193,8 +191,10 @@ def test_daily_job_uploads_without_schedule(monkeypatch, session):
             sleep_end_ts=dt.datetime.combine(d, dt.time(7, 0)),
         ),
     )
+    # scheduler 顶层导入下游服务（ARCHITECTURE_REVIEW A.2.2），
+    # 必须替换 scheduler 命名空间上的绑定。
     monkeypatch.setattr(
-        daily_pipeline,
+        sched_mod,
         "generate_report",
         lambda s, d, st, sync_errors=None: SimpleNamespace(
             risk=SimpleNamespace(
@@ -203,9 +203,9 @@ def test_daily_job_uploads_without_schedule(monkeypatch, session):
             )
         ),
     )
-    monkeypatch.setattr(coach_service, "analyze_daily", lambda s, d, st: {"summary": "ok"})
+    monkeypatch.setattr(sched_mod, "analyze_daily", lambda s, d, st: {"summary": "ok"})
     monkeypatch.setattr(
-        coach_service,
+        sched_mod,
         "build_today_plan",
         lambda s, d, st: SimpleNamespace(id="session-2026-10-14"),
     )
@@ -214,7 +214,7 @@ def test_daily_job_uploads_without_schedule(monkeypatch, session):
         captured["schedule"] = kwargs.get("schedule", "<missing>")
         return SimpleNamespace(status="uploaded", garmin_workout_id=1)
 
-    monkeypatch.setattr(ps, "upload_session", _upload)
+    monkeypatch.setattr(sched_mod, "upload_session", _upload)
 
     out = sched_mod.run_daily_job(D)
 

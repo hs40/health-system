@@ -261,8 +261,6 @@ def test_push_endpoint_delegates(session, monkeypatch):
 def test_run_daily_job_pushes_to_dingtalk(monkeypatch):
     import contextlib
 
-    import app.services.coach_service as cs
-    import app.services.daily_pipeline as dp
     from app.orchestrator import scheduler
     from app.schemas.domain import StandardDaily
 
@@ -286,12 +284,13 @@ def test_run_daily_job_pushes_to_dingtalk(monkeypatch):
             sleep_end_ts=dt.datetime.combine(d, dt.time(7, 0)),
         ),
     )
-    monkeypatch.setattr(dp, "generate_report", lambda s, d, st, sync_errors=None: _Rep())
-    monkeypatch.setattr(cs, "analyze_daily", lambda s, d, st: {"summary": "ok"})
-    monkeypatch.setattr(cs, "build_today_plan", lambda s, d, st: None)
+    # scheduler 顶层导入下游服务（ARCHITECTURE_REVIEW A.2.2），替换点为 scheduler 命名空间
+    monkeypatch.setattr(scheduler, "generate_report", lambda s, d, st, sync_errors=None: _Rep())
+    monkeypatch.setattr(scheduler, "analyze_daily", lambda s, d, st: {"summary": "ok"})
+    monkeypatch.setattr(scheduler, "build_today_plan", lambda s, d, st: None)
     pushed: dict = {}
     monkeypatch.setattr(
-        dingtalk_service,
+        scheduler,
         "push_daily_report",
         lambda s, d, st: pushed.setdefault("day", d) or {"ok": True},
     )

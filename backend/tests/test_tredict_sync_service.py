@@ -150,7 +150,6 @@ def test_dockerfile_copies_app_package():
 def test_scheduler_calls_service_not_subprocess(monkeypatch, session, settings):
     """调度器直调服务，不再 subprocess 调 scripts/daily_sync.py。"""
     from app.orchestrator import scheduler as sched
-    from app.services import tredict_sync_service as svc
 
     called: dict = {}
 
@@ -165,7 +164,7 @@ def test_scheduler_calls_service_not_subprocess(monkeypatch, session, settings):
         called["yes"] = True
         return {"ok": True}
 
-    monkeypatch.setattr(svc, "run_tredict_sync", _spy)
+    monkeypatch.setattr(sched, "run_tredict_sync", _spy)
     # 断言调度器源码不再引用 scripts/daily_sync.py 或 subprocess 调脚本
     src = Path(sched.__file__).read_text(encoding="utf-8")
     assert "scripts/daily_sync.py" not in src

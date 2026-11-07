@@ -58,27 +58,23 @@ def _fake_report(*_args, **_kwargs):
 
 
 def _patch_downstream(monkeypatch, *, analysis=None, plan=None, dingtalk=None, upload=None):
-    """替换 _run_downstream 内部的四个下游服务入口。"""
+    """替换 _run_downstream 内部的四个下游服务入口。
+
+    scheduler 已在模块顶层导入这些符号（ARCHITECTURE_REVIEW A.2.2），
+    因此必须替换 ``scheduler`` 命名空间上的绑定，而不是源模块上的同名属性——
+    替换源模块对已绑定的函数引用无效。
+    """
     import app.orchestrator.scheduler as sched
 
+    monkeypatch.setattr(sched, "generate_report", _fake_report, raising=False)
     monkeypatch.setattr(
-        "app.services.daily_pipeline.generate_report", _fake_report, raising=False
+        sched, "analyze_daily", analysis or (lambda *a, **k: {"summary": "ok"})
     )
+    monkeypatch.setattr(sched, "build_today_plan", plan or (lambda *a, **k: None))
     monkeypatch.setattr(
-        "app.services.coach_service.analyze_daily", analysis or (lambda *a, **k: {"summary": "ok"})
+        sched, "push_daily_report", dingtalk or (lambda *a, **k: "skipped")
     )
-    monkeypatch.setattr(
-        "app.services.coach_service.build_today_plan",
-        plan or (lambda *a, **k: None),
-    )
-    monkeypatch.setattr(
-        "app.services.dingtalk_service.push_daily_report",
-        dingtalk or (lambda *a, **k: "skipped"),
-    )
-    monkeypatch.setattr(
-        "app.services.plan_service.upload_session",
-        upload or (lambda *a, **k: None),
-    )
+    monkeypatch.setattr(sched, "upload_session", upload or (lambda *a, **k: None))
     return sched
 
 
@@ -187,7 +183,7 @@ def test_multiple_failures_each_get_own_fault(session, monkeypatch):
 
 def test_fault_recording_failure_does_not_break_pipeline(session, monkeypatch):
     """Fault 表本身写失败时不得让日任务崩掉（可观测性不能成为新的故障源）。"""
-    import app.services.recovery_service as rec
+    import app.orchestrator.scheduler as sched
 
     def _db_down(*_a, **_k):
         raise RuntimeError("fault table unavailable")
@@ -196,7 +192,7 @@ def test_fault_recording_failure_does_not_break_pipeline(session, monkeypatch):
         raise RuntimeError("llm 502")
 
     _patch_downstream(monkeypatch, analysis=_boom)
-    monkeypatch.setattr(rec, "report_fault", _db_down)
+    monkeypatch.setattr(sched, "report_fault", _db_down)
 
     out: dict = {"date": DAY.isoformat(), "steps": {}}
     _run_downstream(session, DAY, _FakeSettings(), out, _FakeSync())

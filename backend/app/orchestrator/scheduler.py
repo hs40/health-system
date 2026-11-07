@@ -23,10 +23,23 @@ import time
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from sqlmodel import select
 
+from app.adapters.garmin import GarminAdapter
 from app.config import get_settings
+from app.db.models import DailyReportRow
 from app.db.session import init_db, session_scope
 from app.domain.fault_classifier import FaultKind
+from app.domain.sleep import SLEEP_COMPLETE, should_defer, sleep_state
+from app.schemas.domain import StandardDaily
+from app.services.coach_service import analyze_daily, build_today_plan
+from app.services.daily_pipeline import generate_report, sync_daily
+from app.services.dingtalk_service import push_daily_report
+from app.services.plan_service import generate_weekly_plan, upload_session
+from app.services.recovery_service import report_fault
+from app.services.report_service import analyze_monthly, generate_monthly, generate_weekly
+from app.services.tredict_sync_service import refresh_today_activities, run_tredict_sync
+from app.storage.standard_store import get_standard
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -45,8 +58,6 @@ def _record_step_fault(session, *, step: str, day: dt.date, exc: BaseException) 
 
     登记本身失败只记日志——可观测性不能变成新的故障源。
     """
-    from app.services.recovery_service import report_fault
-
     try:
         report_fault(
             session,
@@ -60,25 +71,16 @@ def _record_step_fault(session, *, step: str, day: dt.date, exc: BaseException) 
 
 
 def _sync_daily(session, target, settings, *, refresh=False):
-    """薄包装：便于测试替换（延迟导入避免循环依赖）。"""
-    from app.services.daily_pipeline import sync_daily
-
+    """薄包装：便于测试替换。"""
     return sync_daily(session, target, settings, refresh=refresh)
 
 
 def _get_standard(session, target):
-    from app.storage.standard_store import get_standard
-
     return get_standard(session, target)
 
 
 def _run_downstream(session, target, settings, out: dict, sync) -> None:
     """生成日报 → LLM 分析 → 当日计划 → 钉钉推送 → 上传课程（不排期）。"""
-    from app.services.coach_service import analyze_daily, build_today_plan
-    from app.services.daily_pipeline import generate_report
-    from app.services.dingtalk_service import push_daily_report
-    from app.services.plan_service import upload_session
-
     report = generate_report(session, target, settings, sync_errors=sync.errors)
     if report.risk is not None:
         out["steps"]["risk"] = report.risk.priority.value
@@ -129,16 +131,9 @@ def _run_daily_core(session, target, settings, now, *, retry: bool) -> dict:
     - 没有入睡时间（没有睡眠）/ 睡眠完整 / 到 12:00 → 正常跑下游；
     - ``retry=True``（每小时重试）时，当天日报已存在则直接跳过。
     """
-    from app.domain.sleep import SLEEP_COMPLETE, should_defer, sleep_state
-    from app.schemas.domain import StandardDaily
-
     out: dict = {"date": target.isoformat(), "steps": {}}
 
     if retry:
-        from sqlmodel import select
-
-        from app.db.models import DailyReportRow
-
         exists = session.exec(
             select(DailyReportRow).where(DailyReportRow.date == target)
         ).first()
@@ -193,9 +188,6 @@ def run_sleep_retry_job(*, now: dt.datetime | None = None) -> dict:
 
 def run_weekly_job() -> dict:
     """周任务（阶段 B/C）：上周回顾 + 本周计划草稿。"""
-    from app.services.plan_service import generate_weekly_plan
-    from app.services.report_service import generate_weekly
-
     settings = get_settings()
     today = dt.date.today()
     this_monday = today - dt.timedelta(days=today.weekday())
@@ -232,9 +224,6 @@ def run_tredict_sync_job() -> dict:
     执行：当天刷新 + 活动上传（含自动补 FIT / notes）+ 健康差集上传 +
     云端覆盖校验 → 写 audit + 失败告警。
     """
-    from app.adapters.garmin import GarminAdapter
-    from app.services.tredict_sync_service import refresh_today_activities, run_tredict_sync
-
     settings = get_settings()
 
     def _refresher(day: dt.date) -> dict:
@@ -250,8 +239,6 @@ def run_tredict_sync_job() -> dict:
 
 def run_monthly_job() -> dict:
     """月任务（阶段 C）：上月月报 + 长期目标偏离分析（TC.3）。"""
-    from app.services.report_service import analyze_monthly, generate_monthly
-
     settings = get_settings()
     first = dt.date.today().replace(day=1)
     prev_last = first - dt.timedelta(days=1)

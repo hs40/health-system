@@ -57,7 +57,6 @@ def test_tredict_sync_job_cron_is_23():
 def test_job_result_is_service_result(monkeypatch, tmp_path):
     """调度器把服务结果原样返回（不再包一层 steps/exit 码）。"""
     from app.orchestrator import scheduler as sched
-    from app.services import tredict_sync_service as svc
 
     sentinel = {"ok": True, "activities": {"uploaded": ["42"]}}
 
@@ -65,9 +64,11 @@ def test_job_result_is_service_result(monkeypatch, tmp_path):
     def _scope():
         yield object()  # 服务被 mock，session 不会被真正使用
 
+    # scheduler 在模块顶层导入服务（ARCHITECTURE_REVIEW A.2.2），
+    # 替换点必须是 scheduler 命名空间。
     monkeypatch.setattr(sched, "session_scope", _scope)
     monkeypatch.setattr(sched, "get_settings", lambda: object())
-    monkeypatch.setattr(svc, "run_tredict_sync", lambda sess, st, **kw: sentinel)
+    monkeypatch.setattr(sched, "run_tredict_sync", lambda sess, st, **kw: sentinel)
 
     assert sched.run_tredict_sync_job() == sentinel
 

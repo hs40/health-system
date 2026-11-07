@@ -211,7 +211,6 @@ def test_job_injects_today_refresher(monkeypatch, settings):
     from contextlib import contextmanager
 
     from app.orchestrator import scheduler as sched
-    from app.services import tredict_sync_service as svc
 
     captured: dict = {}
     refreshed: list[dt.date] = []
@@ -233,8 +232,8 @@ def test_job_injects_today_refresher(monkeypatch, settings):
 
     monkeypatch.setattr(sched, "session_scope", _scope)
     monkeypatch.setattr(sched, "get_settings", lambda: settings)
-    monkeypatch.setattr(svc, "run_tredict_sync", _spy)
-    monkeypatch.setattr(svc, "refresh_today_activities", _fake_refresh)
+    monkeypatch.setattr(sched, "run_tredict_sync", _spy)
+    monkeypatch.setattr(sched, "refresh_today_activities", _fake_refresh)
 
     out = sched.run_tredict_sync_job()
 
