@@ -10,68 +10,29 @@
  *    （需求 §12.2：只有日报调整后的训练名称前加「调整」，不得扩展为所有周计划版本变化）
  *  - 撤销：逐步撤销（操作栈）+ 撤销全部
  *  - 硬性安全阻断（后端 hard_block）→ 禁止保存为最终计划，且不可绕过
+ *
+ * 本文件只负责**数据编排与交互状态**；展示区块拆到 `components/plan/weekly/`。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
-import type {
-  PlanEvaluation,
-  TrainingSessionBrief,
-  WeekPlanCard,
-  WeekPlanDay,
-  WeeklyPlan,
-} from '../../api/types'
-import { mondayOf, parseISO, todayISO, WEEKDAYS } from '../../lib/date'
-import { sportLabel } from '../../lib/sports'
-import { CONFLICT_KIND_LABEL } from '../../lib/reports'
+import type { PlanEvaluation, WeekPlanDay, WeeklyPlan } from '../../api/types'
+import { mondayOf, todayISO } from '../../lib/date'
+import { markedSet } from '../../lib/reports'
 import { Page } from '../../components/ui/layout'
 import { Chip } from '../../components/ui/badges'
 import { DateNav } from '../../components/ui/DateNav'
-import { markedSet } from '../../lib/reports'
 import { useReportIndex } from '../../hooks/reportQueries'
-
-const STATUS_LABEL: Record<string, string> = {
-  draft: '草稿',
-  evaluated: '已评估',
-  confirmed: '已确认',
-}
-
-/** 需要完整处方的会话形态（后端 TrainingSession） */
-interface FullSession extends TrainingSessionBrief {
-  warmup?: Record<string, unknown>[]
-  main?: Record<string, unknown>[]
-  cooldown?: Record<string, unknown>[]
-  strength?: { exercise: string; sets: number; reps: number; load_kg?: number | null; rest_sec: number }[]
-  rationale?: string | null
-  target_type?: string | null
-  distance_m?: number | null
-}
+import { WeekHeader } from '../../components/plan/weekly/WeekHeader'
+import { DayCard, type ConflictMark } from '../../components/plan/weekly/DayCard'
+import { SessionPrescription } from '../../components/plan/weekly/SessionPrescription'
+import { EvaluationPanel } from '../../components/plan/weekly/EvaluationPanel'
+import { PlanActionBar } from '../../components/plan/weekly/PlanActionBar'
+import { STATUS_LABEL, type FullSession } from '../../components/plan/weekly/format'
 
 interface SwapStep {
   from: string
   to: string
-}
-
-function durationText(s?: TrainingSessionBrief | null): string {
-  if (!s?.duration_min) return '—'
-  return `${s.duration_min} min`
-}
-
-/** 卡片「训练目标」文案：力量日不套用心率区间说法（否则出现「力量 · 目标 Z2 区间有氧」） */
-function goalText(s: TrainingSessionBrief): string {
-  if (s.sport === 'strength' || s.sport === 'strength_training') return '力量与肌耐力（按组次）'
-  return s.target_hr_zone ? `${s.target_hr_zone} 区间有氧` : '按处方执行'
-}
-
-/** target_type 是 pace | heartRate | open，直接展示会泄漏英文枚举 */
-const TARGET_TYPE_LABEL: Record<string, string> = {
-  pace: '配速',
-  heartRate: '心率',
-  open: '未指定',
-}
-function targetTypeLabel(t?: string | null): string {
-  if (!t) return '未指定'
-  return TARGET_TYPE_LABEL[t] ?? t
 }
 
 export default function WeeklyPlanPage() {
@@ -248,7 +209,7 @@ export default function WeeklyPlanPage() {
   }
 
   const conflictsByDate = useMemo(() => {
-    const map = new Map<string, { hard: boolean; kinds: Set<string> }>()
+    const map = new Map<string, ConflictMark>()
     for (const c of evaluation?.structured_conflicts ?? []) {
       for (const d of c.days) {
         const cur = map.get(d) ?? { hard: false, kinds: new Set<string>() }
@@ -263,12 +224,15 @@ export default function WeeklyPlanPage() {
   // 展开中的处方：跨列展示需要列下标与 session
   const expandedIdx = days?.findIndex((d) => d.date === expanded) ?? -1
   const expandedSession =
-    expandedIdx >= 0 ? ((days?.[expandedIdx]?.session as FullSession | null | undefined) ?? null) : null
+    expandedIdx >= 0
+      ? ((days?.[expandedIdx]?.session as FullSession | null | undefined) ?? null)
+      : null
 
   const status = plan.data?.status ?? 'draft'
   const hardBlock = Boolean(evaluation?.hard_block)
+  const isBusy = busy !== null
   const canConfirm =
-    Boolean(days) && !hardBlock && !dirty && !busy && (status === 'evaluated' || status === 'draft')
+    Boolean(days) && !hardBlock && !dirty && !isBusy && (status === 'evaluated' || status === 'draft')
 
   return (
     <Page>
@@ -328,7 +292,7 @@ export default function WeeklyPlanPage() {
                   setBusy('gen')
                   generate.mutate()
                 }}
-                disabled={busy !== null}
+                disabled={isBusy}
               >
                 生成草稿
               </button>
@@ -349,48 +313,7 @@ export default function WeeklyPlanPage() {
         {days && (
           <div className="hs-card overflow-x-auto pb-2">
             <div className="min-w-[720px]">
-              {/* —— 第一行：星期一至日 + 日期（固定，不随拖动改变）—— */}
-              <div
-                className="grid border-b pb-2"
-                style={{
-                  borderColor: 'var(--hs-border)',
-                  gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-                  gap: 'var(--hs-gap-sm)',
-                }}
-              >
-                {days.map((d, i) => {
-                  const isToday = d.date === todayISO()
-                  return (
-                    <div key={`h-${d.date}`} className="min-w-0 px-1">
-                      <div
-                        className="whitespace-nowrap text-[var(--hs-fs-h3)] font-bold leading-tight"
-                        style={{ color: isToday ? 'var(--hs-accent)' : 'var(--hs-ink)' }}
-                      >
-                        {WEEKDAYS[i] ?? d.date}
-                      </div>
-                      <div
-                        className="whitespace-nowrap text-[var(--hs-fs-micro)] font-semibold"
-                        style={{ color: 'var(--hs-ink-3)' }}
-                      >
-                        {parseISO(d.date).getMonth() + 1}月{parseISO(d.date).getDate()}日
-                      </div>
-                      <label
-                        className="mt-1 inline-flex cursor-pointer items-center gap-1 text-[var(--hs-fs-micro)]"
-                        style={{ color: d.is_night_shift ? 'var(--hs-accent-ink)' : 'var(--hs-ink-4)' }}
-                        title="夜班日：次日安排高强度会被规则阻断"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={d.is_night_shift}
-                          onChange={() => toggleNight(d.date)}
-                          className="h-3 w-3"
-                        />
-                        夜班
-                      </label>
-                    </div>
-                  )
-                })}
-              </div>
+              <WeekHeader days={days} onToggleNight={toggleNight} />
 
               {/* —— 第二行：七张训练卡片（可拖动互换）—— */}
               <div
@@ -400,110 +323,35 @@ export default function WeeklyPlanPage() {
                   gap: 'var(--hs-gap-sm)',
                 }}
               >
-                {days.map((d) => {
-                  const s = d.session as FullSession | null | undefined
-                  const card: WeekPlanCard | undefined = plan.data?.cards?.[d.date]
-                  const conflict = conflictsByDate.get(d.date)
-                  const isOpen = expanded === d.date
-                  return (
-                    <div key={d.date} className="flex min-w-0 flex-col gap-1">
-                      <div
-                        draggable={Boolean(s)}
-                        onDragStart={(e) => {
-                          setDragFrom(d.date)
-                          e.dataTransfer.effectAllowed = 'move'
-                          e.dataTransfer.setData('text/plain', d.date)
-                        }}
-                        onDragEnd={() => {
-                          setDragFrom(null)
-                          setDragOver(null)
-                        }}
-                        onDragOver={(e) => {
-                          e.preventDefault()
-                          if (dragFrom && dragFrom !== d.date) setDragOver(d.date)
-                        }}
-                        onDragLeave={() => setDragOver((cur) => (cur === d.date ? null : cur))}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          const from = e.dataTransfer.getData('text/plain') || dragFrom
-                          setDragOver(null)
-                          setDragFrom(null)
-                          if (from && from !== d.date) swap(from, d.date)
-                        }}
-                        onClick={() => setExpanded(isOpen ? null : d.date)}
-                        className={[
-                          'select-none overflow-hidden rounded-[var(--hs-r)] border p-2.5 transition-all duration-200',
-                          dragFrom === d.date ? 'hs-dragging' : '',
-                          dragOver === d.date ? 'hs-drag-over' : '',
-                          s ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
-                        ].join(' ')}
-                        style={{
-                          borderColor: conflict?.hard
-                            ? 'var(--hs-p1)'
-                            : conflict
-                              ? 'var(--hs-p2)'
-                              : 'var(--hs-border)',
-                          background: s ? 'var(--hs-surface)' : 'var(--hs-surface-2)',
-                          boxShadow: isOpen ? '0 2px 12px -6px rgba(31,94,255,.5)' : undefined,
-                          minHeight: 132,
-                        }}
-                        title={s ? '拖动可与其他日期互换；点击展开处方' : '休息日'}
-                      >
-                        {s ? (
-                          <>
-                            <div
-                              className="break-words text-[var(--hs-fs-small)] font-bold leading-snug"
-                              style={{ color: 'var(--hs-ink)' }}
-                            >
-                              {s.name}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-1 [&>span]:min-w-0">
-                              <Chip tone="accent">{sportLabel(s.sport) ?? s.sport}</Chip>
-                              {s.target_hr_zone && <Chip tone="neutral">{s.target_hr_zone}</Chip>}
-                            </div>
-                            <div
-                              className="mt-1 break-words text-[var(--hs-fs-micro)] leading-snug"
-                              style={{ color: 'var(--hs-ink-3)' }}
-                            >
-                              目标：{goalText(s)}
-                            </div>
-                            <div
-                              className="mt-1.5 text-[var(--hs-fs-h2)] font-bold tabular-nums"
-                              style={{ color: 'var(--hs-accent-ink)' }}
-                            >
-                              {durationText(s)}
-                            </div>
-                            {conflict && (
-                              <div className="mt-1 flex flex-wrap gap-1 [&>span]:min-w-0">
-                                {[...conflict.kinds].map((k) => (
-                                  <Chip key={k} tone={conflict.hard ? 'p1' : 'p2'}>
-                                    {CONFLICT_KIND_LABEL[k] ?? k}
-                                  </Chip>
-                                ))}
-                              </div>
-                            )}
-                            {card?.is_adjusted && (
-                              <div className="mt-1">
-                                <Chip tone="p2">{card.badge ?? '日报已调整'}</Chip>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div
-                            className="flex h-full items-center justify-center text-[var(--hs-fs-small)]"
-                            style={{ color: 'var(--hs-ink-4)' }}
-                          >
-                            休息日
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+                {days.map((d) => (
+                  <DayCard
+                    key={d.date}
+                    day={d}
+                    card={plan.data?.cards?.[d.date]}
+                    conflict={conflictsByDate.get(d.date)}
+                    isOpen={expanded === d.date}
+                    isDragging={dragFrom === d.date}
+                    isDragOver={dragOver === d.date}
+                    hasDragSource={Boolean(dragFrom) && dragFrom !== d.date}
+                    onDragStart={setDragFrom}
+                    onDragEnd={() => {
+                      setDragFrom(null)
+                      setDragOver(null)
+                    }}
+                    onDragOver={setDragOver}
+                    onDragLeave={(date) => setDragOver((cur) => (cur === date ? null : cur))}
+                    onDrop={(from, to) => {
+                      setDragOver(null)
+                      setDragFrom(null)
+                      if (from !== to) swap(from, to)
+                    }}
+                    onClick={(date) => setExpanded((cur) => (cur === date ? null : date))}
+                  />
+                ))}
 
                 {/* 详情：卡片下方展开（从所点列横向跨到行尾，日期不动）。
                     七列各约 95px，处方文字在单列内会严重折行，故跨列展示。 */}
-                {expandedIdx != null && expandedSession && (
+                {expandedIdx >= 0 && expandedSession && (
                   <div
                     className="rounded-[var(--hs-r-sm)] border p-2.5 text-[var(--hs-fs-small)]"
                     style={{
@@ -536,222 +384,30 @@ export default function WeeklyPlanPage() {
           </div>
         )}
 
-        {evaluation && (
-          <div className="hs-card">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="hs-section-title">AI 评估结果</div>
-              <div className="flex items-center gap-2">
-                {hardBlock ? (
-                  <Chip tone="p1" solid>
-                    存在硬性安全问题
-                  </Chip>
-                ) : (
-                  <Chip tone="p4">未发现硬性阻断</Chip>
-                )}
-                <span className="text-[var(--hs-fs-micro)]" style={{ color: 'var(--hs-ink-4)' }}>
-                  {evaluation.evaluated_at?.slice(0, 16).replace('T', ' ')}
-                </span>
-              </div>
-            </div>
+        {evaluation && <EvaluationPanel evaluation={evaluation} />}
 
-            {evaluation.structured_conflicts.length > 0 && (
-              <ul className="mb-3 space-y-1.5">
-                {evaluation.structured_conflicts.map((c, i) => (
-                  <li
-                    key={i}
-                    className="rounded-[var(--hs-r-sm)] border px-2.5 py-2 text-[var(--hs-fs-small)]"
-                    style={{
-                      borderColor: c.hard_block
-                        ? 'color-mix(in srgb, var(--hs-p1) 30%, transparent)'
-                        : c.severity === 'warn'
-                          ? 'color-mix(in srgb, var(--hs-p2) 30%, transparent)'
-                          : 'var(--hs-border)',
-                      background: c.hard_block
-                        ? 'var(--hs-p1-soft)'
-                        : c.severity === 'warn'
-                          ? 'var(--hs-p2-soft)'
-                          : 'var(--hs-surface-2)',
-                    }}
-                  >
-                    <div className="mb-0.5 flex flex-wrap items-center gap-1.5">
-                      <Chip tone={c.hard_block ? 'p1' : c.severity === 'warn' ? 'p2' : 'p3'}>
-                        {CONFLICT_KIND_LABEL[c.kind] ?? c.kind}
-                      </Chip>
-                      {c.hard_block && <Chip tone="p1">硬性阻断</Chip>}
-                      {c.days.length > 0 && (
-                        <span className="text-[var(--hs-fs-micro)]" style={{ color: 'var(--hs-ink-4)' }}>
-                          {c.days.map((d) => `${d.slice(5)}`).join(' / ')}
-                        </span>
-                      )}
-                      {c.source === 'ai' && (
-                        <span className="text-[var(--hs-fs-micro)]" style={{ color: 'var(--hs-ink-4)' }}>
-                          AI 提示
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ color: 'var(--hs-ink-2)' }}>{c.message}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <EvalList title="发现" items={evaluation.findings} />
-              <EvalList title="建议" items={evaluation.suggestions} />
-              <EvalList title="风险提示" items={evaluation.risk_notes} tone="p1" />
-            </div>
-
-            {hardBlock && (
-              <p
-                className="mt-3 rounded-[var(--hs-r-sm)] px-2.5 py-2 text-[var(--hs-fs-small)] font-semibold"
-                style={{ background: 'var(--hs-p1-soft)', color: 'var(--hs-p1)' }}
-              >
-                该计划存在硬性安全问题，系统不会因为你的确认而生效。请先按上面的建议调整（如换日、降强度或插入恢复日），再重新评估。
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* —— 吸底操作条 —— */}
         {days && (
-          <div
-            className="fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur"
-            style={{ borderColor: 'var(--hs-border)', background: 'rgba(255,255,255,.92)' }}
-          >
-            <div className="mx-auto flex max-w-[var(--hs-content-max)] flex-wrap items-center gap-2 px-4 py-2.5">
-              <span className="text-[var(--hs-fs-small)] font-semibold" style={{ color: 'var(--hs-ink-2)' }}>
-                {dirty
-                  ? '有未评估的调整（已存为草稿）'
-                  : hardBlock
-                    ? '当前草稿存在硬性阻断'
-                    : status === 'confirmed'
-                      ? '已保存为最终周计划'
-                      : '草稿已保存'}
-              </span>
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <button
-                  className="hs-btn"
-                  onClick={undoStep}
-                  disabled={history.current.length === 0 || busy !== null}
-                >
-                  撤销上一步
-                </button>
-                <button className="hs-btn" onClick={undoAll} disabled={!original || busy !== null}>
-                  撤销全部
-                </button>
-                <button
-                  className="hs-btn"
-                  onClick={() => {
-                    setBusy('eval')
-                    evaluate.mutate()
-                  }}
-                  disabled={busy !== null || !days}
-                >
-                  {busy === 'eval' ? '评估中…' : 'AI 评估'}
-                </button>
-                <button
-                  className="hs-btn hs-btn-primary"
-                  onClick={() => {
-                    setBusy('confirm')
-                    confirm.mutate()
-                  }}
-                  disabled={!canConfirm}
-                  title={hardBlock ? '存在硬性安全问题，不可确认' : dirty ? '请先完成 AI 评估' : ''}
-                >
-                  {busy === 'confirm' ? '保存中…' : '保存为最终计划'}
-                </button>
-              </div>
-            </div>
-          </div>
+          <PlanActionBar
+            dirty={dirty}
+            hardBlock={hardBlock}
+            confirmed={status === 'confirmed'}
+            canUndoStep={history.current.length > 0}
+            canUndoAll={Boolean(original)}
+            canConfirm={canConfirm}
+            busy={busy}
+            onUndoStep={undoStep}
+            onUndoAll={undoAll}
+            onEvaluate={() => {
+              setBusy('eval')
+              evaluate.mutate()
+            }}
+            onConfirm={() => {
+              setBusy('confirm')
+              confirm.mutate()
+            }}
+          />
         )}
       </div>
     </Page>
   )
 }
-
-function EvalList({ title, items, tone }: { title: string; items: string[]; tone?: 'p1' }) {
-  if (!items?.length) return null
-  return (
-    <div>
-      <div className="hs-label" style={tone === 'p1' ? { color: 'var(--hs-p1)' } : undefined}>
-        {title}
-      </div>
-      <ul className="mt-1 space-y-0.5 text-[var(--hs-fs-small)]" style={{ color: 'var(--hs-ink-2)' }}>
-        {items.map((t, i) => (
-          <li key={i} className="flex gap-1">
-            <span style={{ color: 'var(--hs-ink-4)' }}>·</span>
-            {t}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-/** 完整训练处方：热身 / 主项 / 放松 / 力量组，直接铺开（卡片下方跨列展开） */
-function SessionPrescription({ s }: { s: FullSession }) {
-  const stepText = (st: Record<string, unknown>) => {
-    const parts: string[] = []
-    if (st['name']) parts.push(String(st['name']))
-    if (st['duration_sec']) parts.push(`${Math.round(Number(st['duration_sec']) / 60)} min`)
-    if (st['distance_m']) parts.push(`${st['distance_m']} m`)
-    if (st['hr_zone']) parts.push(`Z${st['hr_zone']}`)
-    return parts.join(' · ') || '—'
-  }
-  const blocks: [string, Record<string, unknown>[]][] = [
-    ['热身', s.warmup ?? []],
-    ['主项', s.main ?? []],
-    ['放松', s.cooldown ?? []],
-  ]
-  return (
-    <div className="space-y-2">
-      <div className="grid gap-2 sm:grid-cols-3">
-        {blocks
-          .filter(([, steps]) => steps.length > 0)
-          .map(([label, steps]) => (
-            <div key={label}>
-              <div className="hs-label" style={{ color: 'var(--hs-accent-ink)' }}>
-                {label}
-              </div>
-              <ul className="mt-0.5 space-y-0.5">
-                {steps.map((st, i) => (
-                  <li key={i} style={{ color: 'var(--hs-ink-2)' }}>
-                    {stepText(st)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-      </div>
-
-      {s.strength && s.strength.length > 0 && (
-        <div>
-          <div className="hs-label" style={{ color: 'var(--hs-accent-ink)' }}>
-            力量组
-          </div>
-          <ul className="mt-0.5 grid gap-x-3 gap-y-0.5 sm:grid-cols-2 lg:grid-cols-3">
-            {s.strength.map((st, i) => (
-              <li key={i} style={{ color: 'var(--hs-ink-2)' }}>
-                {st.exercise} {st.sets}×{st.reps}
-                {st.load_kg ? ` @${st.load_kg}kg` : '（负荷自选）'} 休息 {st.rest_sec}s
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {s.rationale && (
-        <p className="leading-relaxed" style={{ color: 'var(--hs-ink-3)' }}>
-          <span className="font-bold">依据：</span>
-          {s.rationale}
-        </p>
-      )}
-      <div style={{ color: 'var(--hs-ink-4)' }}>
-        目标 {targetTypeLabel(s.target_type)} · {s.target_hr_zone ?? '未设定强度区间'}
-        {s.duration_min ? ` · 总时长 ${s.duration_min} min` : ''}
-        {s.distance_m ? ` · 距离 ${s.distance_m} m` : ''}
-      </div>
-    </div>
-  )
-}
-
