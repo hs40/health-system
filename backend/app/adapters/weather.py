@@ -39,7 +39,7 @@ from pathlib import Path
 
 from app.config import Settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.adapters.weather")
 
 # Token 提前重签量（秒）：避免边界过期导致请求失败
 _TOKEN_REFRESH_MARGIN_SEC = 60

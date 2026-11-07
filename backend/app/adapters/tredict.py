@@ -30,7 +30,7 @@ from app.config import Settings
 from app.errors import AppError
 from app.schemas.enums import ErrorCode
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.adapters.tredict")
 
 BASE = "https://www.tredict.com"
 API = BASE + "/api/oauth/v2"

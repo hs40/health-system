@@ -22,7 +22,10 @@ from app.db import models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # ``disable_existing_loggers=False`` 不能省：默认值 True 会把此前已创建的
+    # 全部 logger（含 ``app.logging_conf`` 建立的 ``hs.*`` 树）置为 ``disabled``，
+    # 迁移之后再打日志会静默丢失——进程内跑迁移时（测试、启动引导）同样会中招。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # URL 解析优先级：调用方显式注入（如测试）> 运行时 Settings。
 # alembic.ini 中的占位 URL 视为未设置。

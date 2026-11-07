@@ -25,7 +25,7 @@ from app.schemas.enums import AuditCategory, ErrorCode, SessionStatus, TaskStatu
 from app.storage import task_state
 from app.storage.audit_store import record as audit
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.services.plan")
 
 
 def _idem(session_id: str) -> str:

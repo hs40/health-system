@@ -15,14 +15,15 @@ from app.api import activities, data, environment, messages, ops, plans, reports
 from app.config import get_settings
 from app.db.session import init_db
 from app.errors import AppError
+from app.logging_conf import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("health-system")
+logger = logging.getLogger("hs.api")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    setup_logging()
     settings.ensure_dirs()
     init_db()
     logger.info(

@@ -46,7 +46,7 @@ from app.storage.audit_store import record as audit
 from app.storage.derived_store import all_latest_baselines
 from app.storage.standard_store import load_standard_range
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.services.plan")
 
 _SPORTS = {s.value: s for s in Sport}
 

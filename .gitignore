@@ -67,3 +67,7 @@ docs/
 .vscode/
 .idea/
 .DS_Store
+
+# 测试/构建产物
+backend/build/
+backend/res.xml

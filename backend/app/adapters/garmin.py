@@ -31,7 +31,7 @@ from app.schemas.domain import RawDailyRef, StandardDaily
 from app.schemas.enums import ErrorCode
 from app.storage.activity_source import load_laps
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.adapters.garmin")
 
 # 需要同步的数据集（与现有 garmin-sync.js 主题对齐，便于 V4 对拍）
 DATASETS: tuple[str, ...] = (

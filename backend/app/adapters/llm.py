@@ -19,7 +19,7 @@ from app.config import Settings
 from app.errors import AppError
 from app.schemas.enums import ErrorCode
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.adapters.llm")
 
 # 传输给 LLM 的数据范围声明（用于审计；不发送原始逐秒数据）
 DEFAULT_SCOPE = "aggregated_daily_metrics"

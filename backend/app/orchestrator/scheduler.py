@@ -31,6 +31,7 @@ from app.db.models import DailyReportRow
 from app.db.session import init_db, session_scope
 from app.domain.fault_classifier import FaultKind
 from app.domain.sleep import SLEEP_COMPLETE, should_defer, sleep_state
+from app.logging_conf import log_context
 from app.schemas.domain import StandardDaily
 from app.services.coach_service import analyze_daily, build_today_plan
 from app.services.daily_pipeline import generate_report, sync_daily
@@ -41,9 +42,6 @@ from app.services.report_service import analyze_monthly, generate_monthly, gener
 from app.services.tredict_sync_service import refresh_today_activities, run_tredict_sync
 from app.storage.standard_store import get_standard
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
 logger = logging.getLogger("hs.scheduler")
 
 _running = True
@@ -169,7 +167,8 @@ def run_daily_job(day: dt.date | None = None, *, now: dt.datetime | None = None)
     settings = get_settings()
     target = day or dt.date.today()
     now = now or dt.datetime.now()
-    with session_scope() as session:
+    with log_context(task_id="daily", date=target), session_scope() as session:
+        logger.info("日任务开始")
         return _run_daily_core(session, target, settings, now, retry=False)
 
 
@@ -182,7 +181,7 @@ def run_sleep_retry_job(*, now: dt.datetime | None = None) -> dict:
     settings = get_settings()
     target = dt.date.today()
     now = now or dt.datetime.now()
-    with session_scope() as session:
+    with log_context(task_id="sleep_retry", date=target), session_scope() as session:
         return _run_daily_core(session, target, settings, now, retry=True)
 
 
@@ -193,7 +192,7 @@ def run_weekly_job() -> dict:
     this_monday = today - dt.timedelta(days=today.weekday())
     out: dict = {"week_start": this_monday.isoformat(), "steps": {}}
 
-    with session_scope() as session:
+    with log_context(task_id="weekly", date=this_monday), session_scope() as session:
         try:
             report = generate_weekly(session, this_monday - dt.timedelta(days=7), settings)
             out["steps"]["weekly_review"] = report.week_start.isoformat()
@@ -230,10 +229,16 @@ def run_tredict_sync_job() -> dict:
         return refresh_today_activities(GarminAdapter(settings), settings, day)
 
     try:
-        with session_scope() as session:
+        with (
+            log_context(task_id="tredict_sync", date=dt.date.today()),
+            session_scope() as session,
+        ):
             return run_tredict_sync(session, settings, today_refresher=_refresher)
     except Exception as e:  # noqa: BLE001 — 兜底，绝不崩调度器进程
-        logger.error("Tredict 同步任务异常: %s", e)
+        # 日志必须留在上下文块内：``with ... except`` 时 ``__exit__`` 先执行、
+        # contextvar 已被 reset，在 except 里打的日志会丢掉 task_id。
+        with log_context(task_id="tredict_sync", date=dt.date.today()):
+            logger.error("Tredict 同步任务异常: %s", e)
         return {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
 
 
@@ -245,7 +250,7 @@ def run_monthly_job() -> dict:
     month = f"{prev_last.year:04d}-{prev_last.month:02d}"
     out: dict = {"month": month, "steps": {}}
 
-    with session_scope() as session:
+    with log_context(task_id="monthly", date=month), session_scope() as session:
         try:
             report = generate_monthly(session, month, settings)
             out["steps"]["monthly"] = report.month

@@ -34,7 +34,7 @@ from sqlmodel import Session
 from app.config import Settings
 from app.schemas.enums import AuditCategory, MessageCategory, MessageImportance
 
-logger = logging.getLogger("hs.tredict_sync")
+logger = logging.getLogger("hs.services.tredict_sync")
 
 ENTITY_REF = "tredictSync"
 
@@ -89,7 +89,7 @@ def refresh_today_activities(
             result = garmin.sync_day(today, datasets=["activities"])
         except Exception as e:  # noqa: BLE001 — 局部容错，不连坐上传
             out["errors"].append(f"{type(e).__name__}: {e}")
-            logger.warning("[tredictSync] 刷新当天 activities 第 %d 次异常：%s", i + 1, e)
+            logger.warning("刷新当天 activities 第 %d 次异常：%s", i + 1, e)
             if sleeper is not None:
                 sleeper()
             continue
@@ -206,15 +206,15 @@ def default_fit_fetcher(garmin: Any) -> Callable[[str], bytes | None]:
             with zipfile.ZipFile(io.BytesIO(blob)) as z:
                 names = [n for n in z.namelist() if n.lower().endswith(".fit")]
                 if len(names) != 1:
-                    logger.warning("[tredictSync] %s ZIP 内 .fit 数=%d，跳过", aid, len(names))
+                    logger.warning("%s ZIP 内 .fit 数=%d，跳过", aid, len(names))
                     return None
                 fit = z.read(names[0])
             if len(fit) < 14 or fit[8:12] != b".FIT":
-                logger.warning("[tredictSync] %s FIT 头不合法，跳过", aid)
+                logger.warning("%s FIT 头不合法，跳过", aid)
                 return None
             return fit
         except Exception as e:  # noqa: BLE001 — 单条失败不阻断
-            logger.warning("[tredictSync] 下载 FIT %s 失败：%s", aid, e)
+            logger.warning("下载 FIT %s 失败：%s", aid, e)
             return None
 
     return _fetch
@@ -325,7 +325,7 @@ def _record_upload_ledger(
             },
         )
     except Exception as e:  # noqa: BLE001 — 台账失败不阻断上传
-        logger.error("[tredictSync] 写 sync_ledger 失败 %s：%s", aid, e)
+        logger.error("写 sync_ledger 失败 %s：%s", aid, e)
 
 
 def _sync_activities(
@@ -412,7 +412,7 @@ def _upsert_cloud_mirror(session: Session, cloud_list: list[dict]) -> int:
             session.add(build_row(tid, item, canonical_sha256(item), ref))
             inserted += 1
         except Exception as e:  # noqa: BLE001 — 镜像写失败不阻断上传
-            logger.warning("[tredictSync] 镜像写入跳过 %s：%s", tid, e)
+            logger.warning("镜像写入跳过 %s：%s", tid, e)
     return inserted
 
 
@@ -521,7 +521,7 @@ def _write_audit(session: Session, settings: Settings, result: dict, today: dt.d
             audit_dir=Path(settings.audit_dir),
         )
     except Exception as e:  # noqa: BLE001 — audit 失败不该掩盖主结论
-        logger.error("[tredictSync] 写 audit 失败：%s", e)
+        logger.error("写 audit 失败：%s", e)
 
 
 def _alert(session: Session, settings: Settings, result: dict, today: dt.date) -> None:
@@ -572,7 +572,7 @@ def _alert(session: Session, settings: Settings, result: dict, today: dt.date) -
             importance=MessageImportance.HIGH,
         )
     except Exception as e:  # noqa: BLE001
-        logger.error("[tredictSync] 写告警失败：%s", e)
+        logger.error("写告警失败：%s", e)
 
 
 # ============================================================
@@ -627,7 +627,7 @@ def run_tredict_sync(
             result["today_refresh"] = today_refresher(today)
         except Exception as e:  # noqa: BLE001
             result["today_refresh"]["errors"].append(f"{type(e).__name__}: {e}")
-            logger.error("[tredictSync] 当天活动刷新失败：%s", e)
+            logger.error("当天活动刷新失败：%s", e)
         for err in result["today_refresh"].get("errors") or []:
             result["errors"].append(f"当天活动刷新：{err}")
 
@@ -642,7 +642,7 @@ def run_tredict_sync(
         cloud_ok = True
     except Exception as e:  # noqa: BLE001
         result["errors"].append(f"读取活动/云端清单失败：{type(e).__name__}: {e}")
-        logger.error("[tredictSync] %s", result["errors"][-1])
+        logger.error("%s", result["errors"][-1])
 
     # 云端清单拉不到时**熔断上传**：无法确认「缺失」，盲传会在云端造重复活动
     # （P8 脚本同款安全阀）。此时 result["activities"] 保持全空，校验也不跑。
@@ -653,14 +653,14 @@ def run_tredict_sync(
             )
         except Exception as e:  # noqa: BLE001
             result["errors"].append(f"活动上传失败：{type(e).__name__}: {e}")
-            logger.error("[tredictSync] %s", result["errors"][-1])
+            logger.error("%s", result["errors"][-1])
 
     # 健康上传
     try:
         result["health"] = _sync_health(settings, tredict)
     except Exception as e:  # noqa: BLE001
         result["errors"].append(f"健康上传失败：{type(e).__name__}: {e}")
-        logger.error("[tredictSync] %s", result["errors"][-1])
+        logger.error("%s", result["errors"][-1])
 
     # 云端校验：本次确认上传成功的活动算已覆盖（云端索引可能延迟）
     if cloud_ok:
@@ -672,7 +672,7 @@ def run_tredict_sync(
             result["cloud_mirror_inserted"] = _upsert_cloud_mirror(session, after)
         except Exception as e:  # noqa: BLE001
             result["errors"].append(f"云端校验失败：{type(e).__name__}: {e}")
-            logger.error("[tredictSync] %s", result["errors"][-1])
+            logger.error("%s", result["errors"][-1])
 
     a = result["activities"]
     result["ok"] = not (

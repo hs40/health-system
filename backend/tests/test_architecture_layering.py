@@ -154,3 +154,64 @@ class TestModuleSizeBudget:
             "以下 services 模块超出体量预算且未豁免（应拆分或显式登记理由）：\n  "
             + "\n  ".join(oversized)
         )
+
+
+class TestLoggingConventions:
+    """日志配置与命名规范（ARCHITECTURE_REVIEW A.8.1）。
+
+    此前 ``main.py`` 与 ``scheduler.py`` 各写一份 ``basicConfig``，格式字符串重复；
+    logger 命名并存 ``health-system`` / ``hs.scheduler`` / 裸 ``__name__`` 三种风格；
+    ``Settings.log_level`` 定义了却无人读取。三件事都由 ``app/logging_conf.py`` 收口，
+    这里把「不得回退」固化为断言。
+    """
+
+    def test_basic_config_only_in_logging_conf(self):
+        offenders: list[str] = []
+        for path in APP.rglob("*.py"):
+            rel = path.relative_to(APP).as_posix()
+            if rel == "logging_conf.py":
+                continue
+            if "logging.basicConfig" in path.read_text(encoding="utf-8"):
+                offenders.append(rel)
+        assert offenders == [], (
+            "日志配置必须只在 app/logging_conf.py 里做一次，以下模块重复配置：\n  "
+            + "\n  ".join(offenders)
+        )
+
+    def test_loggers_use_hs_namespace(self):
+        """所有 ``logging.getLogger("字面量")`` 必须落在 ``hs.`` 命名空间。
+
+        用 ``__name__`` 的模块会被解析成 ``app.*``，父级 ``hs.*`` 配置无法继承
+        ——统一改成 ``hs.<子系统>.<模块>``。
+        """
+        allowed = {"apscheduler"}  # 第三方库降噪
+        offenders: list[str] = []
+        for path in APP.rglob("*.py"):
+            rel = path.relative_to(APP).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and node.args):
+                    continue
+                fn = node.func
+                is_getlogger = (
+                    isinstance(fn, ast.Attribute)
+                    and fn.attr == "getLogger"
+                    and isinstance(fn.value, ast.Name)
+                    and fn.value.id == "logging"
+                )
+                if not is_getlogger:
+                    continue
+                arg = node.args[0]
+                if isinstance(arg, ast.Name) and arg.id == "__name__":
+                    offenders.append(f"{rel}:{node.lineno} 使用 __name__")
+                elif (
+                    isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)
+                    and arg.value not in allowed
+                    and not arg.value.startswith("hs.")
+                ):
+                    offenders.append(f"{rel}:{node.lineno} 使用 {arg.value!r}")
+        assert offenders == [], (
+            "logger 必须使用 hs.* 命名空间（见 app/logging_conf.LOGGER_NAMESPACES）：\n  "
+            + "\n  ".join(offenders)
+        )

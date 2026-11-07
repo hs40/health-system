@@ -34,7 +34,7 @@ from app.schemas.enums import (
 )
 from app.storage.audit_store import record as audit
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hs.services.coach")
 
 _SPORTS = {s.value: s for s in Sport}
 
