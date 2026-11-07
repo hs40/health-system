@@ -1,0 +1,8 @@
+{
+  "P1-LOAD-HRV": {
+    "acwr_high": 1.45
+  },
+  "P2-LOAD": {
+    "acwr_elevated": 1.25
+  }
+}

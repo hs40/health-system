@@ -109,17 +109,23 @@ class CalibrationReport:
         }
 
 
-def build_candidate_rules(overrides: dict[str, dict[str, float]]) -> dict[str, rr.RuleSpec]:
+def build_candidate_rules(
+    overrides: dict[str, dict[str, float]],
+    *,
+    base: dict[str, rr.RuleSpec] | None = None,
+) -> dict[str, rr.RuleSpec]:
     """按 ``overrides`` 覆盖阈值，返回**新的**规则集（不改动全局 ``RULES``）。
 
     未知 rule_id 或未知 threshold 键 → ``OverrideError``。
+    ``base`` 缺省取 ``rr.effective_rules()``（含数据文件覆盖）。
     """
-    unknown_rules = sorted(set(overrides) - set(rr.RULES))
+    source = base if base is not None else rr.effective_rules()
+    unknown_rules = sorted(set(overrides) - set(source))
     if unknown_rules:
-        raise OverrideError(f"未知规则：{unknown_rules}；可用：{sorted(rr.RULES)}")
+        raise OverrideError(f"未知规则：{unknown_rules}；可用：{sorted(source)}")
 
     out: dict[str, rr.RuleSpec] = {}
-    for rule_id, spec in rr.RULES.items():
+    for rule_id, spec in source.items():
         patch = overrides.get(rule_id)
         if not patch:
             out[rule_id] = spec
@@ -152,15 +158,20 @@ def calibrate(
     overrides: dict[str, dict[str, float]],
     *,
     limit: int = DEFAULT_SAMPLE_LIMIT,
+    baseline: dict[str, rr.RuleSpec] | None = None,
 ) -> CalibrationReport:
     """同一批历史数据，用「当前阈值」与「候选阈值」各求值一次，输出差异。
 
     :param overrides: ``{rule_id: {threshold_key: 新值}}``，如
-        ``{"P1-LOAD-HRV": {"acwr_high": 1.45}}``。
+        ``{"P1-LOAD-HRV": {"acwr_high": 1.45}}``。传空 dict 且想比较
+        「当前代码默认值 vs 已生效的数据文件」时，用 ``baseline=RULES``。
     :param limit: 取最近多少天的日报作为样本（默认 470，与 ``strategy_replay`` 一致）。
+    :param baseline: 基线规则集；缺省是**当前实际生效**的规则
+        （代码默认 + ``data/rule_thresholds.json`` 覆盖）。这样「候选 vs 当前」
+        才是运维眼里的真正对照——否则已上线覆盖值会被当成候选。
     """
-    candidate = build_candidate_rules(overrides)
-    baseline = rr.RULES
+    candidate = build_candidate_rules(overrides, base=baseline)
+    base_rules = baseline if baseline is not None else rr.effective_rules()
 
     baselines = _latest_baselines(session)
     records = session.exec(
@@ -175,7 +186,7 @@ def calibrate(
         if sd is None:
             continue
         inp = _to_risk_input(sd, baselines, acwr.get(rep.date))
-        before = _evaluate_with(baseline, inp)
+        before = _evaluate_with(base_rules, inp)
         after = _evaluate_with(candidate, inp)
         shifts.append(
             DayShift(

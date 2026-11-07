@@ -15,9 +15,13 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclasses_replace
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from app.schemas.enums import DataState
@@ -488,12 +492,133 @@ RULES: dict[str, RuleSpec] = {
 }
 
 
+# ============================================================
+# 候选阈值外置（ARCHITECTURE_REVIEW A.5.2 剩余）
+# ============================================================
+#
+# 背景：阈值烧死在模块常量里，``RULES`` 是 import 时建好的全局单例。
+# ``calibration.py`` 能在**进程内**用一套候选规则跑对照回放，但结论出来后
+# 无法固化——只能改源码再提交。
+#
+# 这里给一条「数据文件 → 运行时生效」的窄通道：
+#
+#   data/rule_thresholds.json
+#   {"P1-LOAD-HRV": {"acwr_high": 1.45}, "P2-LOAD": {"acwr_elevated": 1.25}}
+#
+# 规则：
+# - **文件不存在 = 用代码里的默认值**，不报错（这是绝大多数部署的常态）。
+# - 文件存在但内容非法 → 抛 ``ThresholdOverlayError``，**不静默忽略**。
+#   静默忽略会让人以为「调了但没效果」，比直接失败更难排查。
+# - 只覆盖 ``thresholds``，不碰 ``condition`` / ``reason``——后者是代码，
+#   不是数据，允许用文件改会变成「配置文件里藏逻辑」。
+# - 覆盖**不改全局 ``RULES``**：``RULES`` 保持「代码默认值」的语义，
+#   供 ``calibration`` 当基线。生效规则通过 ``effective_rules()`` 取。
+
+_THRESHOLDS_FILENAME = "rule_thresholds.json"
+
+
+class ThresholdOverlayError(ValueError):
+    """阈值覆盖文件格式或内容非法。"""
+
+
+def load_threshold_overlay(path: Any) -> dict[str, dict[str, Any]]:
+    """读取并校验覆盖文件；文件不存在返回空 dict。
+
+    校验比 ``calibration.build_candidate_rules`` 更严格：那里是**人在命令行
+    临时试**，错了改一行重跑；这里是**部署产物**，错了会在下一次日报里
+    静默生效——所以在加载阶段就把未知 rule_id / 未知键 / 非数值全部打回。
+    """
+    file = Path(path)
+    if not file.exists():
+        return {}
+    try:
+        raw = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ThresholdOverlayError(f"无法读取 {file}：{exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ThresholdOverlayError(f"{file} 顶层应为对象 {{rule_id: {{k: v}}}}")
+
+    unknown_rules = sorted(set(raw) - set(RULES))
+    if unknown_rules:
+        raise ThresholdOverlayError(
+            f"{file} 含未知规则 {unknown_rules}；可用：{sorted(RULES)}"
+        )
+
+    overlay: dict[str, dict[str, Any]] = {}
+    for rule_id, patch in raw.items():
+        if not isinstance(patch, dict):
+            raise ThresholdOverlayError(
+                f"{file} 的 {rule_id} 应为对象，实际 {type(patch).__name__}"
+            )
+        spec = RULES[rule_id]
+        unknown_keys = sorted(set(patch) - set(spec.thresholds))
+        if unknown_keys:
+            raise ThresholdOverlayError(
+                f"{file} 的 {rule_id} 含未知阈值键 {unknown_keys}；"
+                f"可用：{sorted(spec.thresholds)}"
+            )
+        for key, value in patch.items():
+            default = spec.thresholds[key]
+            # 类型必须与代码默认值兼容：``bool`` 是 ``int`` 的子类，
+            # 单独挡一下，否则 True 会被当成 1 悄悄生效。
+            if isinstance(default, bool) != isinstance(value, bool):
+                raise ThresholdOverlayError(f"{file} 的 {rule_id}.{key} 类型与默认值不符")
+            if not isinstance(value, type(default)):
+                raise ThresholdOverlayError(
+                    f"{file} 的 {rule_id}.{key} 应为 {type(default).__name__}，"
+                    f"实际 {type(value).__name__}"
+                )
+        overlay[rule_id] = dict(patch)
+    return overlay
+
+
+_overlay_cache: dict[str, dict[str, Any]] | None = None
+
+
+def effective_rules() -> dict[str, RuleSpec]:
+    """当前**实际生效**的规则集：代码默认值 + 数据文件覆盖。
+
+    ``RULES`` 保持不变——它是「代码里的默认值」，也是
+    ``calibration.calibrate`` 的基线。若让覆盖直接改 ``RULES``，
+    「候选 vs 当前」的对照就失去了参照点。
+    """
+    global _overlay_cache
+    if _overlay_cache is None:
+        configured = os.getenv("RULE_THRESHOLDS_FILE")
+        # 与 ``Settings.db_path`` 同约定：进程 CWD 为 ``backend/``。
+        path = Path(configured) if configured else Path("../data") / _THRESHOLDS_FILENAME
+        _overlay_cache = load_threshold_overlay(path)
+
+    if not _overlay_cache:
+        return dict(RULES)
+
+    out: dict[str, RuleSpec] = {}
+    for rule_id, spec in RULES.items():
+        patch = _overlay_cache.get(rule_id)
+        if not patch:
+            out[rule_id] = spec
+        else:
+            out[rule_id] = dataclasses_replace(
+                spec, thresholds={**spec.thresholds, **patch}
+            )
+    return out
+
+
+def reset_threshold_overlay_cache() -> None:
+    """清缓存（测试用）。生产进程不会在运行中改文件。"""
+    global _overlay_cache
+    _overlay_cache = None
+
+
 def ordered_specs() -> tuple[RuleSpec, ...]:
-    """按**判定顺序**返回规则（P1 → P2 → P3 → P4，同优先级内保持书写顺序）。
+    """按**判定顺序**返回**当前生效**的规则（P1 → P2 → P3 → P4，同优先级内保持书写顺序）。
 
     判定器只依赖这个顺序与每条规则的 condition / 输出标志，不再知道任何具体规则。
+    返回的是代码默认值叠加 ``data/rule_thresholds.json`` 后的结果（见
+    ``effective_rules``）——文件不存在时与 ``RULES`` 完全一致。
     """
-    return tuple(RULES.values())
+    return tuple(effective_rules().values())
 
 
 def active_rules() -> dict[str, RuleSpec]:

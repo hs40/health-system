@@ -13,6 +13,10 @@
     python -m app.domain.calibration_cli --set P1-LOAD-HRV.acwr_high=1.45 \\
                                            --set P2-LOAD.acwr_high=1.25
 
+    # 读候选阈值数据文件（A.5.2 剩余）：文件格式与运行时生效的
+    # data/rule_thresholds.json 一致，可以先在这里验证，再拿去部署
+    python -m app.domain.calibration_cli --file ../data/rule_thresholds.json
+
 只读：不写库、不改全局规则集、不产生策略版本。输出 JSON 便于存档对比。
 """
 
@@ -25,6 +29,7 @@ import sys
 from sqlmodel import Session
 
 from app.db.session import engine
+from app.domain import rule_registry as rr
 from app.domain.calibration import calibrate
 
 
@@ -54,11 +59,26 @@ def main(argv: list[str] | None = None) -> int:
         help="候选阈值，可重复指定",
     )
     ap.add_argument("--limit", type=int, default=470, help="样本天数（默认 470）")
+    ap.add_argument(
+        "--file",
+        dest="overlay_file",
+        metavar="PATH",
+        help="候选阈值数据文件（与运行时 data/rule_thresholds.json 同格式）",
+    )
     args = ap.parse_args(argv)
 
     overrides: dict[str, dict[str, float]] = {}
     for rule_id, key, value in args.overrides:
         overrides.setdefault(rule_id, {})[key] = value
+
+    if args.overlay_file:
+        try:
+            from_file = rr.load_threshold_overlay(args.overlay_file)
+        except rr.ThresholdOverlayError as exc:
+            print(f"[calibrate] 文件错误：{exc}", file=sys.stderr)
+            return 2
+        for rule_id, patch in from_file.items():
+            overrides.setdefault(rule_id, {}).update(patch)
 
     try:
         with Session(engine) as session:
