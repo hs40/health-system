@@ -34,6 +34,10 @@ import { StandardSourceModal } from '../../components/StandardSourceModal'
 import type { ChartPoint } from '../../components/ui/Chart'
 import { sportLabel } from '../../lib/sports'
 
+// ACWR 预热窗口：与后端 `/api/data/load-series` 的 SERIES_WARMUP_DAYS 保持一致。
+// 后端对每一天都按「D−56」固定预热，前端请求窗口小于它就会算出不一致的 ACWR。
+const LOAD_WINDOW_DAYS = 56
+
 
 
 function hhmm(sec: unknown): string {
@@ -104,8 +108,13 @@ export default function DailyPage() {
   const err = error as ApiError | null
   const notFound = err instanceof ApiError && err.status === 404
 
-  // 负荷/ACWR 时序：日报前后各取 21 天（报告页自带图表，不跳转数据页）
-  const from = AddDays(day, -21)
+  // 负荷/ACWR 时序：报告页自带图表，不跳转数据页。
+  //
+  // 窗口必须覆盖 ACWR 的预热口径：后端 `/api/data/load-series` 对每一天都固定用
+  // 「D−56」作 EWMA 预热起点（`api/data.py` SERIES_WARMUP_DAYS）。如果只取 21 天，
+  // 查看历史日期时算出的 ACWR 会与日报不一致，或 `findLoadDay` 直接匹配不到而
+  // 静默回退到快照。这里取 56 天，与后端同口径。
+  const from = AddDays(day, -LOAD_WINDOW_DAYS)
   const loadSeries = useLoadSeries(from, day)
 
   const sleepSeries = useQuery<{ metric: string; points: { date: string; value: number }[] }>({
