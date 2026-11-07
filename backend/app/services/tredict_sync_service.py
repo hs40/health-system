@@ -51,6 +51,65 @@ def fit_dir_for(settings: Settings) -> Path:
 
 
 # ============================================================
+# 当天活动供给（2026-11-07 修复根因）
+# ============================================================
+def refresh_today_activities(
+    garmin: Any,
+    settings: Settings | None,
+    today: dt.date,
+    *,
+    attempts: int = 3,
+    sleeper: Callable[[], None] | None = None,
+) -> dict:
+    """23:00 上传前刷新「当天」activities 快照，让当天训练当天可见。
+
+    根因：``load_activities()`` 只读 ``activities/*.json``，而该快照仅由 07:30
+    日任务写「当天」+ 次日回补「前一天」；当天 07:30 后完成的训练当天 23:00
+    不可见，稳定延迟一天。V42/V43 只修上传执行侧、从未碰数据供给侧。
+
+    行为（Q3 = 任务内轻量重拉、不改调度拓扑）：
+    - 只调 ``sync_day(today, datasets=["activities"])``；
+    - 空返回视为「可能索引延迟」，最多重拉 ``attempts`` 次；仍空按休息日
+      正常结束（``empty=True``、不告警，避免休息日误报）；
+    - 任一异常收敛进 ``errors``，绝不抛出（Q1：局部容错、不连坐健康上传）。
+
+    返回结构化结果，供 job 层并入 audit 结果。``settings`` 仅为签名对称保留，
+    路径由 ``garmin`` adapter 自己从 settings 解析。
+    """
+    out: dict = {
+        "date": today.isoformat(),
+        "refreshed": False,
+        "empty": False,
+        "attempts": 0,
+        "errors": [],
+    }
+    for i in range(attempts):
+        out["attempts"] = i + 1
+        try:
+            result = garmin.sync_day(today, datasets=["activities"])
+        except Exception as e:  # noqa: BLE001 — 局部容错，不连坐上传
+            out["errors"].append(f"{type(e).__name__}: {e}")
+            logger.warning("[tredictSync] 刷新当天 activities 第 %d 次异常：%s", i + 1, e)
+            if sleeper is not None:
+                sleeper()
+            continue
+
+        written = list(getattr(result, "written", None) or [])
+        skipped = list(getattr(result, "skipped", None) or [])
+        errors = dict(getattr(result, "errors", None) or {})
+        if errors.get("activities"):
+            out["errors"].append(f"activities: {errors['activities']}")
+        if "activities" in written or "activities" in skipped:
+            out["refreshed"] = True
+            return out
+        # 空返回：可能 Garmin 索引延迟 → 轻量重拉
+        if sleeper is not None:
+            sleeper()
+    out["empty"] = True
+    return out
+
+
+# ============================================================
 # 纯判定：哪些活动云端还没有
 # ============================================================
 def _refs_for_matching(activities: dict, cloud_list: list[dict]) -> tuple[list, list]:
@@ -164,13 +223,120 @@ def default_fit_fetcher(garmin: Any) -> Callable[[str], bytes | None]:
 # ============================================================
 # 子步骤：活动 / 健康 / 校验
 # ============================================================
+def _is_strength(type_key: str) -> bool:
+    """与旧脚本 ``upload_tredict_activity.py`` 同口径：typeKey 含 ``strength``。"""
+    return "strength" in (type_key or "")
+
+
+def _build_notes(settings: Settings, ref: Any, limit: int) -> str:
+    """力量活动 → notes（复用 ``domain/strength/notes``）；非力量返回空串。"""
+    from app.domain.strength.notes import build_strength_notes, truncate_notes
+    from app.storage.activity_source import load_sets
+
+    if ref is None or not _is_strength(getattr(ref, "activity_type", "")):
+        return ""
+    payload = getattr(ref, "payload", {}) or {}
+    aid = str(getattr(ref, "activity_id", ""))
+    text = build_strength_notes(
+        aid,
+        payload.get("summarizedExerciseSets"),
+        load_sets(garmin_raw_dir(settings), aid),
+    )
+    return truncate_notes(text, limit)
+
+
+def _backfill_notes(
+    settings: Settings, tredict: Any, activities: dict, cloud_list: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Q4：对云端已存在、notes 为空的记录补写 notes（只补空、幂等）。
+
+    只处理力量活动（非力量没有 notes 语义）；已有 notes 的一律不覆盖。
+    返回 ``(meta_updated, meta_failed)``。
+    """
+    from app.domain.matching import match_activities
+    from app.domain.strength.notes import NOTES_LIMIT_UPDATE
+
+    updated: list[dict] = []
+    failed: list[dict] = []
+    cloud_notes = {
+        str(item.get("id")): str(item.get("notes") or "")
+        for item in cloud_list
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    grefs, trefs = _refs_for_matching(activities, cloud_list)
+    for outcome in match_activities(grefs, trefs):
+        if not outcome.garmin_id or not outcome.tredict_id:
+            continue
+        if cloud_notes.get(str(outcome.tredict_id)):
+            continue  # 已有 notes：只补空，绝不覆盖
+        want = _build_notes(settings, activities.get(outcome.garmin_id), NOTES_LIMIT_UPDATE)
+        if not want:
+            continue
+        try:
+            r = tredict.update_activity(str(outcome.tredict_id), {"notes": want})
+        except Exception as e:  # noqa: BLE001 — 单条失败不阻断
+            failed.append({
+                "activity_id": outcome.garmin_id,
+                "tredict_id": outcome.tredict_id,
+                "error": f"{type(e).__name__}: {e}",
+            })
+            continue
+        if r.get("ok"):
+            updated.append({
+                "activity_id": outcome.garmin_id,
+                "tredict_id": outcome.tredict_id,
+                "fields": ["notes"],
+            })
+        else:
+            failed.append({
+                "activity_id": outcome.garmin_id,
+                "tredict_id": outcome.tredict_id,
+                "status": r.get("status"),
+                "error": r.get("text", ""),
+            })
+    return updated, failed
+
+
+def _record_upload_ledger(
+    session: Session, aid: str, fit: bytes, result: dict, notes_len: int
+) -> None:
+    """写一条 ``local2tredict`` 台账（Q2 遗留③：运维台直接读这张表）。
+
+    失败不抛：台账是观测手段，不能反向阻断上传主流程。
+    """
+    import hashlib
+
+    from app.domain.tredict_sync import DIRECTION_PUSH, upsert_ledger
+
+    try:
+        upsert_ledger(
+            session,
+            aid,
+            local_hash=hashlib.sha256(fit).hexdigest(),
+            remote_hash="",
+            state="ok" if (result.get("ok") or result.get("exists")) else "missing_remote",
+            direction=DIRECTION_PUSH,
+            detail={
+                "action": "upload",
+                "ok": bool(result.get("ok")),
+                "status": result.get("status"),
+                "notes_len": notes_len,
+                "at": dt.datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — 台账失败不阻断上传
+        logger.error("[tredictSync] 写 sync_ledger 失败 %s：%s", aid, e)
+
+
 def _sync_activities(
+    session: Session,
     settings: Settings,
     tredict: Any,
     fit_fetcher: Callable[[str], bytes | None],
     activities: dict,
     cloud_list: list[dict],
 ) -> dict:
+    from app.domain.strength.notes import NOTES_LIMIT_UPLOAD
     from app.storage.activity_source import load_activities
 
     if not activities:
@@ -189,17 +355,26 @@ def _sync_activities(
             continue
         ref = activities.get(aid)
         name = str(ref.name) if ref is not None else ""
+        notes = _build_notes(settings, ref, NOTES_LIMIT_UPLOAD)
         try:
-            r = tredict.upload_activity(aid, fit, name=name)
+            r = tredict.upload_activity(aid, fit, name=name, notes=notes)
         except Exception as e:  # noqa: BLE001 — 单条失败不阻断
             failed.append({"activity_id": aid, "error": f"{type(e).__name__}: {e}"})
+            _record_upload_ledger(
+                session, aid, fit,
+                {"ok": False, "status": None, "text": f"{type(e).__name__}: {e}"},
+                len(notes),
+            )
             continue
+        _record_upload_ledger(session, aid, fit, r, len(notes))
         if r.get("ok") or r.get("exists"):
             (exists if r.get("exists") else uploaded).append(aid)
         else:
             failed.append(
                 {"activity_id": aid, "status": r.get("status"), "error": r.get("text", "")}
             )
+
+    meta_updated, meta_failed = _backfill_notes(settings, tredict, activities, cloud_list)
     return {
         "local": len(activities),
         "cloud": len(cloud_list),
@@ -208,7 +383,37 @@ def _sync_activities(
         "exists": exists,
         "failed": failed,
         "no_fit": no_fit,
+        "meta_updated": meta_updated,
+        "meta_failed": meta_failed,
     }
+
+
+def _upsert_cloud_mirror(session: Session, cloud_list: list[dict]) -> int:
+    """Q2 遗留③：把云端**新出现**的活动补进 ``tredict_activity`` 镜像。
+
+    只做「不存在则插入」：已存在的行交给 backfill（详情 sha）维护，避免两套
+    sha 口径（清单项 vs 详情）反复互相覆盖。单条失败不影响主流程。
+    """
+    from app.db.models import TredictActivityRow
+    from app.domain.tredict_sync import build_row, to_tredict_ref
+    from app.domain.verify import canonical_sha256
+
+    inserted = 0
+    for item in cloud_list:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        tid = str(item["id"])
+        try:
+            if session.get(TredictActivityRow, tid) is not None:
+                continue
+            ref = to_tredict_ref(tid, item)
+            if ref is None:
+                continue
+            session.add(build_row(tid, item, canonical_sha256(item), ref))
+            inserted += 1
+        except Exception as e:  # noqa: BLE001 — 镜像写失败不阻断上传
+            logger.warning("[tredictSync] 镜像写入跳过 %s：%s", tid, e)
+    return inserted
 
 
 def _sync_health(settings: Settings, tredict: Any) -> dict:
@@ -265,20 +470,31 @@ def _sync_health(settings: Settings, tredict: Any) -> dict:
 def _verify_coverage(
     activities: dict, cloud_list: list[dict], confirmed: set[str]
 ) -> dict:
-    """上传后云端清单 vs 本地活动：仍缺多少（复用 domain/verify 纯函数）。
+    """上传后云端清单 vs 本地活动：区分「真覆盖 / 待索引 / 真缺失」。
 
     ``confirmed`` = 本次 ``upload_activity`` 返回 ok/exists 的活动。云端清单通常
-    不会立即索引刚上传的活动（有延迟），把这些算进已覆盖，避免「刚传完就假红」。
-    真正没传上去的（failed / no_fit）仍会留在 ``only_garmin`` 触发告警。
+    不会立即索引刚上传的活动（有延迟）。V43 直接把 ``confirmed`` 无条件并入
+    ``covered`` → 即使云端根本没建记录也判 ok、永不告警（**假绿**，2026-11-07 修）。
+
+    修复：只有云端清单里**真实匹配**到的才算已覆盖；本次已上传但云端尚未出现的
+    记为 ``pending_cloud_index``（显式暴露 + 落告警待复核），既不静默判绿，也不
+    误报为 ``only_garmin`` 硬缺失（避免刚传完就假红）。真正没传上去的
+    （failed / no_fit）仍留在 ``only_garmin`` 触发告警。
     """
     from app.domain.matching import match_activities
     from app.domain.verify import compare_activity_coverage
 
     grefs, trefs = _refs_for_matching(activities, cloud_list)
     outcomes = match_activities(grefs, trefs)
-    covered = {o.garmin_id for o in outcomes if o.garmin_id} | confirmed
+    cloud_matched = {o.garmin_id for o in outcomes if o.garmin_id}
+    pending = sorted(confirmed - cloud_matched)
+    covered = cloud_matched | set(pending)
     cov = compare_activity_coverage({g.activity_id for g in grefs}, covered)
-    return {"only_garmin": cov["only_garmin"], "only_tredict": cov["only_tredict"]}
+    return {
+        "only_garmin": cov["only_garmin"],
+        "only_tredict": cov["only_tredict"],
+        "pending_cloud_index": pending,
+    }
 
 
 # ============================================================
@@ -298,6 +514,8 @@ def _write_audit(session: Session, settings: Settings, result: dict, today: dt.d
                                for k, v in result["activities"].items()},
                 "health": result["health"],
                 "verify": result["verify"],
+                "today_refresh": result.get("today_refresh"),
+                "cloud_mirror_inserted": result.get("cloud_mirror_inserted", 0),
                 "errors": result["errors"],
             },
             audit_dir=Path(settings.audit_dir),
@@ -319,10 +537,16 @@ def _alert(session: Session, settings: Settings, result: dict, today: dt.date) -
         reasons.append(f"活动上传失败 {len(a['failed'])} 条")
     if a["no_fit"]:
         reasons.append(f"缺 FIT {len(a['no_fit'])} 条")
+    if a.get("meta_failed"):
+        reasons.append(f"补 notes 失败 {len(a['meta_failed'])} 条")
     if result["errors"]:
         reasons.append(f"异常 {len(result['errors'])} 项")
     if result["verify"]["only_garmin"]:
         reasons.append(f"覆盖仍缺 {len(result['verify']['only_garmin'])} 条")
+    if result["verify"].get("pending_cloud_index"):
+        reasons.append(
+            f"已上传但云端尚未索引 {len(result['verify']['pending_cloud_index'])} 条（待复核）"
+        )
     if result["health"]["errors"]:
         reasons.append(f"健康上传错误 {len(result['health']['errors'])} 项")
     if not reasons:
@@ -362,11 +586,15 @@ def run_tredict_sync(
     tredict: Any = None,
     fit_fetcher: Callable[[str], bytes | None] | None = None,
     today: dt.date | None = None,
+    today_refresher: Callable[[dt.date], dict] | None = None,
 ) -> dict:
-    """执行「活动上传 + 健康上传 + 云端校验」，返回结构化结果，不抛异常。
+    """执行「当天刷新 + 活动上传 + 健康上传 + 云端校验」，返回结构化结果，不抛异常。
 
     ``garmin`` / ``tredict`` 缺省时由本服务构造真实 adapter（生产路径）；
     测试注入 fake。``fit_fetcher`` 缺省时用 ``default_fit_fetcher(garmin)``。
+    ``today_refresher`` 由 job 层注入（2026-11-07 根因修复）：在读取本地快照
+    **之前**刷新当天 activities，使当天 07:30 后完成的训练当天即可见。
+    缺省 ``None`` 保持纯编排语义，便于既有测试注入 fake。
     """
     from app.adapters.garmin import GarminAdapter
     from app.adapters.tredict import TredictAdapter
@@ -382,11 +610,26 @@ def run_tredict_sync(
         "ok": False,
         "date": today.isoformat(),
         "activities": {"local": 0, "cloud": 0, "missing": [], "uploaded": [],
-                       "exists": [], "failed": [], "no_fit": []},
+                       "exists": [], "failed": [], "no_fit": [],
+                       "meta_updated": [], "meta_failed": []},
         "health": {"hrv": 0, "sleep": 0, "bodyvalues": 0, "posted": 0, "errors": []},
-        "verify": {"only_garmin": [], "only_tredict": []},
+        "verify": {"only_garmin": [], "only_tredict": [], "pending_cloud_index": []},
+        "cloud_mirror_inserted": 0,
+        "today_refresh": {"date": today.isoformat(), "refreshed": False, "empty": False,
+                          "attempts": 0, "errors": []},
         "errors": [],
     }
+
+    # 根因修复：先刷新当天 activities 快照，再读本地活动 —— 顺序不可颠倒。
+    # 局部容错：刷新失败只记 errors，不中断上传（Q1：不连坐健康上传）。
+    if today_refresher is not None:
+        try:
+            result["today_refresh"] = today_refresher(today)
+        except Exception as e:  # noqa: BLE001
+            result["today_refresh"]["errors"].append(f"{type(e).__name__}: {e}")
+            logger.error("[tredictSync] 当天活动刷新失败：%s", e)
+        for err in result["today_refresh"].get("errors") or []:
+            result["errors"].append(f"当天活动刷新：{err}")
 
     activities: dict = {}
     cloud_list: list[dict] = []
@@ -406,7 +649,7 @@ def run_tredict_sync(
     if cloud_ok:
         try:
             result["activities"] = _sync_activities(
-                settings, tredict, fetcher, activities, cloud_list
+                session, settings, tredict, fetcher, activities, cloud_list
             )
         except Exception as e:  # noqa: BLE001
             result["errors"].append(f"活动上传失败：{type(e).__name__}: {e}")
@@ -426,6 +669,7 @@ def run_tredict_sync(
             confirmed = set(a["uploaded"]) | set(a["exists"])
             after = list(tredict.fetch_activity_list(extended=True))
             result["verify"] = _verify_coverage(activities, after, confirmed)
+            result["cloud_mirror_inserted"] = _upsert_cloud_mirror(session, after)
         except Exception as e:  # noqa: BLE001
             result["errors"].append(f"云端校验失败：{type(e).__name__}: {e}")
             logger.error("[tredictSync] %s", result["errors"][-1])

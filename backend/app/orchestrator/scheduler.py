@@ -194,14 +194,25 @@ def run_tredict_sync_job() -> dict:
     → 任务静默失败 10 天。V43 改为调用 ``app/services`` 内的 ``tredict_sync_service``
     （随 app 包进镜像、路径走 settings、可单测、可观测）。
 
-    执行：活动上传（含自动补 FIT）+ 健康差集上传 + 云端覆盖校验 → 写 audit + 失败告警。
+    2026-11-07 根因修复：上传前先刷新「当天」activities 快照。此前 23:00 只读
+    07:30 日任务写「当天」+ 次日回补「前一天」的快照，当天 07:30 后完成的训练
+    当天不可见、稳定延迟一天。刷新以回调注入服务（不改 build_scheduler 注册拓扑），
+    局部容错、不连坐健康上传。
+
+    执行：当天刷新 + 活动上传（含自动补 FIT / notes）+ 健康差集上传 +
+    云端覆盖校验 → 写 audit + 失败告警。
     """
-    from app.services.tredict_sync_service import run_tredict_sync
+    from app.adapters.garmin import GarminAdapter
+    from app.services.tredict_sync_service import refresh_today_activities, run_tredict_sync
 
     settings = get_settings()
+
+    def _refresher(day: dt.date) -> dict:
+        return refresh_today_activities(GarminAdapter(settings), settings, day)
+
     try:
         with session_scope() as session:
-            return run_tredict_sync(session, settings)
+            return run_tredict_sync(session, settings, today_refresher=_refresher)
     except Exception as e:  # noqa: BLE001 — 兜底，绝不崩调度器进程
         logger.error("Tredict 同步任务异常: %s", e)
         return {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
