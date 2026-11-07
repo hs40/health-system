@@ -51,11 +51,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        run: npm ci
+        # 用 npm install 而非 npm ci：与 Dockerfile.single stage 1 保持一致，
+        # 确保 CI runner（Linux）正确安装平台特定的 optional dependencies。
+        run: npm install --no-audit --no-fund
         working-directory: frontend
 
       - name: Frontend build (type check)
