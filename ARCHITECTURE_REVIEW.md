@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.3.0）
+## 执行进度（截至 2026-11-07，v3.3.1）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -23,6 +23,8 @@
 | A.5.2 | 规则阈值校准：双规则集对照回放（`domain/calibration.py`） | ✅ v3.3.0 首版 |
 | A.5.2 剩余 | 校准结果接入「候选阈值外置为数据文件」 | ⬜ 待立项 |
 | A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ⬜ 待立项 |
+| A.1.2 前端 | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib） | ✅ v3.3.1 |
+| A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -55,6 +57,20 @@
   `domain/calibration.py` 用「当前规则集 vs 候选规则集」跑同一批历史数据，
   输出逐日差异与优先级迁移矩阵。CLI：`python -m app.domain.calibration_cli
   --set P1-LOAD-HRV.acwr_high=1.45`。**只读**，不写库、不改全局规则、不产生策略版本。
+
+**v3.3.1 落地细节（第二批 · 前端）**：
+
+- **DailyPage 拆分**：按「有没有状态」切，展示区块外提到
+  `components/reports/daily/`（Headline / Appendix / TrainingTable / Skeleton + format），
+  结论规则 `buildHeadline` 抽到 `lib/headline.ts`（纯函数）。
+  页面只留数据编排与交互状态，729 → 440 行，最大子模块 110 行。行为零变化。
+- **`gen:api` 修复**：原脚本直接打 `http://localhost:8000/openapi.json`，必须先起后端，
+  且失败只有 ECONNREFUSED。改为后端 `scripts/export_openapi.py` 离线导出
+  （`app.openapi()`，不连库，54 路径），前端 `scripts/gen-api.mjs` 串起导出→生成→清理，
+  并自动定位 `backend/.venv` 解释器。生成物按 `.gitignore` 忽略。
+- **清理**：`frontend/src.bak-20261022/`（198K，无引用）、27 个
+  `vite.config.ts.timestamp-*.mjs`（vite 异常退出残留）——均未入库，仅本地磁盘。
+- **未做**：`WeeklyPlanPage.tsx`（757 行）单独立项，本轮不动。
 
 > 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。

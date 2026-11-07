@@ -316,6 +316,17 @@ stage 1 的 `npm run build` 覆盖。任一失败则不产出镜像。
 调度器不得函数内延迟导入、services 不得反向依赖 orchestrator、
 `services/` 与 `domain/` 模块体量预算、日志配置单点化与 `hs.*` 命名规范。
 
+### 7.1.1 生成 OpenAPI 类型
+
+```bash
+cd frontend
+npm run gen:api      # 后端离线导出 → src/api/schema.d.ts
+```
+
+无需先启动后端：后端通过 `app.openapi()` 直接导出（不连数据库）。生成物
+`schema.d.ts` 按 `.gitignore` 忽略，需要时重建即可。`src/api/types.ts` 目前仍为
+手工维护并与后端契约对齐。
+
 ### 7.2 静态检查
 
 ```bash
@@ -437,15 +448,21 @@ health-system/
 11. ~~阈值烧死在模块常量里，无法「换一套阈值重跑」~~ → `judge_priority(specs=...)` +
     `domain/calibration.py` 双规则集对照回放，只读 CLI（A.5.2 首版）。
 
+已解决（v3.3.1，第二批 · 前端）：
+
+12. ~~`DailyPage.tsx` 729 行~~ → 展示区块外提到 `components/reports/daily/`，
+    结论规则入 `lib/headline.ts`，降至 440 行，最大子模块 110 行（A.1.2 前端）。
+13. ~~`gen:api` 必须先起后端、失败无提示~~ → 后端离线导出 OpenAPI，`npm run gen:api` 一次跑通（A.9）。
+14. ~~`src.bak-20261022` / 27 个 `vite.config.ts.timestamp-*` 残留~~ → 已清理（均未入库）。
+
 尚存：
 
 1. 校准结果尚未外置为数据文件，候选阈值仍需人工写进 CLI 参数（A.5.2 剩余，P1）。
 2. 日志暂未贯穿采集端：Nginx access log 与前端请求缺 `request_id` 关联（A.8.1 剩余，P2）。
-3. 前端 `DailyPage.tsx`（729 行）待拆分；`src.bak-20261022` 与 `vite.config.ts.timestamp-*`
-   残留待清理（A.1.2 前端部分，P1）。
+3. 前端 `WeeklyPlanPage.tsx`（757 行）待拆分，单独立项（A.1.2 前端剩余，P1）。
 4. 配置中存在「候选阈值待验证」注释，需产品化时固化（A.5.2，P1）。
-5. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
-4. 结构化日志规范尚未落地（A.8.1，P2）。
+5. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
+   `gen:api` 产出的 `schema.d.ts` 尚未接入类型层（A.9，P2）。
 
 ### 9.4 给 AI 编码代理
 
