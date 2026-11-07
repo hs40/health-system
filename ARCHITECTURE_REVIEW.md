@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.3.2）
+## 执行进度（截至 2026-11-07，v3.4.0）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -21,8 +21,8 @@
 | A.1.2 / C.4.2 | `domain/verify.py` 拆分为 `verify/` 包（1016 行 → 9 模块，最大 298 行） | ✅ v3.3.0 |
 | A.8.1 | 结构化日志：单点配置 + `task_id`/`date` 上下文注入 + 命名规范 | ✅ v3.3.0 |
 | A.5.2 | 规则阈值校准：双规则集对照回放（`domain/calibration.py`） | ✅ v3.3.0 首版 |
-| A.5.2 剩余 | 校准结果接入「候选阈值外置为数据文件」 | ⬜ 待立项 |
-| A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ⬜ 待立项 |
+| A.5.2 剩余 | 校准结果接入「候选阈值外置为数据文件」 | ✅ v3.4.0 |
+| A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ✅ v3.4.0 |
 | A.1.2 前端 | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib） | ✅ v3.3.1 |
 | A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
 | A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
@@ -88,6 +88,36 @@
   `PlanActionBar` 的状态文案抽成 `statusText()`（原先三元嵌套在 JSX 里）。
 - **`schema.d.ts` 策略已定**：**构建时生成、不入库**（已写入 `.gitignore`）。
   `types.ts` 的迁移延后——迁移后 CI 必须先跑 `gen:api` 再做类型检查，否则类型文件不存在。
+
+**v3.4.0 落地细节（可观测性与配置收尾）**：
+
+- **A.8.1 采集端 request_id**：三段打通，链路 `浏览器 → Nginx → 后端日志`。
+  - Nginx：`map $http_x_request_id $hs_request_id { default $http_x_request_id; "" $request_id; }`
+    ——前端带了就透传，没带用内置 `$request_id` 生成，**进后端之前**的请求
+    （404、超时、静态资源）也有 ID。access log 换自定义格式带 `rid=`。
+  - 后端：`app/middleware/request_id.py`，**纯 ASGI 中间件**。刻意不用
+    `BaseHTTPMiddleware`——后者把下游放独立 task，contextvar 传播与同一条协程链
+    不同，日志里拿不到 request_id 是最常见的症状。
+  - 非法入站值**丢弃重新生成**，不清洗（洗白后可能与上游撞车）。字符集
+    `[A-Za-z0-9._:-]{1,128}`：这个值要进日志（CRLF 注入）与响应头（控制字符会让
+    uvicorn 报错）。下游若也写了同名头，去重成**一个**且以中间件为准。
+  - access log 只打 `status>=400` 或 `>=500ms`：Nginx 已记全量，后端再记一遍是
+    双份噪音，NAS 上 `docker logs` 长得很快。
+  - 前端 `ApiError` 新增 `requestId`，上报障时给这一个字符串即可对上日志。
+    **踩坑**：`crypto.randomUUID` 只在安全上下文（https/localhost）可用，NAS 内网
+    走 `http://192.168.2.2` 是**非安全上下文**，那里它是 `undefined`——必须降级到
+    `getRandomValues`。
+- **A.5.2 候选阈值外置**：`data/rule_thresholds.json`（或 `RULE_THRESHOLDS_FILE`）
+  可覆盖 `thresholds`，校准结论得以固化，不再需要改源码提交。
+  - **文件不存在 = 用默认值**（常态，不能因缺文件就挂）；**非法 = 抛错**，
+    静默忽略会让人以为「调了但没效果」。
+  - 只覆盖 `thresholds`，不碰 `condition` / `reason`——否则变成「配置文件里藏逻辑」。
+  - **`RULES` 保持不变**（它是「代码默认值」+ 校准基线）；生效规则走
+    `effective_rules()`，判定链路入口 `ordered_specs()` 已改读它。
+  - `calibrate` 的 baseline 缺省取生效值——运维眼里的「当前」是已上线覆盖值；
+    要对照代码默认值需显式传 `baseline=rr.RULES`。
+  - CLI 新增 `--file`，与运行时同一套校验；`rule_thresholds.example.json` 有测试
+    锁住「样例必须能通过校验」，避免照抄 example 在上线时炸。
 
 > 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。

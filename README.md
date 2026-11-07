@@ -328,6 +328,41 @@ npm run gen:api      # 后端离线导出 → src/api/schema.d.ts
 `src/api/types.ts` 目前仍为手工维护并与后端契约对齐；迁移到生成类型时，
 CI 必须先跑 `gen:api` 再做类型检查，否则类型文件不存在。
 
+### 7.1.2 按 request_id 追一个请求
+
+每个请求都有 `X-Request-ID`，链路是 `浏览器 → Nginx → 后端`：
+
+- 前端每个请求自动带；`ApiError.requestId` 里就是它（服务端回写优先）。
+- Nginx 没收到时用内置 `$request_id` 生成，access log 里是 `rid=` 字段。
+- 后端把它注入日志上下文，行内渲染为 `[req <id>]`；响应头也回写同一个值。
+
+排障时拿一个 ID 即可对齐两处：
+
+```bash
+docker logs <container> 2>&1 | grep '<request-id>'    # Nginx 与后端日志同在该流中
+```
+
+后端 access log 只记 `status>=400` 或耗时 `>=500ms` 的请求——正常请求在 Nginx
+日志里有全量记录，后端不重复记。
+
+### 7.1.3 调整风险阈值（不改源码）
+
+候选阈值可外置为数据文件，`data/rule_thresholds.json`（或 `RULE_THRESHOLDS_FILE` 指定）：
+
+```json
+{ "P1-LOAD-HRV": { "acwr_high": 1.45 } }
+```
+
+上线前先看影响面（只读，不写库）：
+
+```bash
+cd backend
+python -m app.domain.calibration_cli --file ../data/rule_thresholds.json
+```
+
+只允许覆盖**已存在**的阈值键，类型必须与默认值一致；文件非法会直接报错而非静默忽略。
+样例见 `backend/rule_thresholds.example.json`。文件不存在时使用代码默认值。
+
 ### 7.2 静态检查
 
 ```bash
@@ -461,14 +496,21 @@ health-system/
 15. ~~`WeeklyPlanPage.tsx` 757 行~~ → 展示区块外提到 `components/plan/weekly/`，
     降至 413 行，最大子模块 141 行；文案双向 diff 确认无用户可见变化（A.1.2 前端）。
 
+已解决（v3.4.0，可观测性与配置收尾）：
+
+16. ~~日志未贯穿采集端，Nginx / 前端 / 后端三者无法按请求关联~~ →
+    `X-Request-ID` 全链路：Nginx 生成或透传、后端中间件注入日志上下文并回写响应头、
+    前端 `ApiError.requestId` 可直接上报（A.8.1 剩余）。
+17. ~~校准结果无法固化，候选阈值只能改源码~~ → `data/rule_thresholds.json`
+    覆盖生效，非法文件直接报错而非静默忽略；CLI `--file` 与运行时同一套校验（A.5.2 剩余）。
+
 尚存：
 
-1. 校准结果尚未外置为数据文件，候选阈值仍需人工写进 CLI 参数（A.5.2 剩余，P1）。
-2. 日志暂未贯穿采集端：Nginx access log 与前端请求缺 `request_id` 关联（A.8.1 剩余，P2）。
-3. 配置中存在「候选阈值待验证」注释，需产品化时固化（A.5.2，P1）。
-4. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
+1. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
    `gen:api` 产出的 `schema.d.ts` 尚未接入类型层（A.9，P2）。
    **策略已定**：`schema.d.ts` 构建时生成、不入库；迁移时 CI 需先跑 `gen:api` 再做类型检查。
+2. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
+   这是**依据等级**标注而非待办——阈值现在可通过数据文件校准，但「校准到多少」需真实数据支撑。
 
 ### 9.4 给 AI 编码代理
 
