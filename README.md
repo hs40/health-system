@@ -1,173 +1,433 @@
 # 健康运动管理系统（Health System）
 
-本地优先的个人健康运动管理系统：Garmin 数据同步 → 数据质量校验 → AI 教练分析 → 训练计划生成 → 风险拦截 → 周期报告。
+本地优先的个人健康运动管理系统：Garmin 数据同步 → 标准化与质量校验 → AI 教练分析 → 训练计划生成 → 风险拦截 → 周期报告与推送。
 
-- **技术路线：** 路线 C 全 Python（FastAPI + python-garminconnect + React）
-- **部署宿主：** 群晖 DS220+（单容器 Docker Compose，镜像来自 ghcr.io）
-- **需求基线：** [`健康运动管理系统首期开发项目需求报告.md`](./健康运动管理系统首期开发项目需求报告.md)、[`健康运动管理系统新增二期需求报告.md`](./健康运动管理系统新增二期需求报告.md)
-- **未完成事项总账（唯一入口）：** [`docs/待验证事项.md`](./docs/待验证事项.md)
+- **定位**：单用户、无登录、无多租户。设计选择明确，不为「做成平台」而引入认证或权限模型。
+- **技术路线**：全 Python 后端（FastAPI + python-garminconnect）+ React 前端；单容器 Docker 部署于群晖 NAS。
+- **核心价值**：把可穿戴数据变成可执行的训练决策，并用程序化风险引擎（非 LLM）做硬拦截。
 
-> **注：** `docs/` 与三份需求报告**仅存本地、不纳入版本库**（含个人健康数据、居住地与内网拓扑信息）。
-> 本文中指向 `docs/` 的链接**仅在本地有效**；远端仓库只含代码。
+> 本文档面向**最终用户**（日常使用、本地开发、NAS 部署）为主，**维护者/架构评审者**为辅。架构诊断与改进建议见 [`ARCHITECTURE_REVIEW.md`](./ARCHITECTURE_REVIEW.md)。
 
-## 目录结构
+---
 
-```
-Health System/
-├─ backend/                 FastAPI 后端（Python 3.12）
-│  ├─ app/
-│  │  ├─ api/               REST 路由
-│  │  ├─ schemas/           Pydantic 契约（enums/domain/api）
-│  │  ├─ adapters/          Garmin / Tredict / LLM 适配器
-│  │  ├─ domain/            纯计算（基线/负荷/风险/质量/处方）
-│  │  ├─ services/          应用服务（报告/计划/教练）
-│  │  ├─ orchestrator/      调度/状态机/补算
-│  │  ├─ storage/           数据仓储
-│  │  └─ db/                SQLModel 表 + 会话
-│  └─ tests/
-├─ frontend/                React + Vite + TS + Tailwind
-│  └─ src/{api,components,pages}
-├─ data/                    挂载卷（raw 只读 / db / audit / garmin_tokens）
-├─ scripts/                 脚本（dev.sh 本地启动、pack_data.sh 数据同步等）
-├─ docs/                    现行文档（14 份）
-│  └─ archive/              已完成使命的历史文档（只读存档）
-├─ dev.cmd                  双击启动本地前后端（调用 scripts/dev.sh）
-├─ docker-compose.single.yml  单容器 hs-app（nginx + uvicorn + scheduler，supervisord 托管）
-├─ deploy/                    单容器镜像与部署（Dockerfile.single / nas_deploy_single.sh / nginx / supervisord）
-├─ .github/workflows/         CI：构建并推送镜像到 ghcr.io
-└─ .env.example
-```
+## 1. 项目简介
 
-## 部署（唯一现行方法）
+### 1.1 解决什么问题
 
-镜像由 GitHub Actions 构建并推送到 **ghcr.io**，NAS 从仓库拉取**单容器**镜像运行。
-早期的「本地导出 tar → scp → docker load → 三容器」方案已废弃，相关脚本与编排已删除。
+个人训练者每天需要：
 
-### 构建与发版
+1. 从 Garmin 拉取睡眠、HRV、静息心率、Body Battery、活动与 FIT 明细；
+2. 计算训练负荷与 ACWR，评估恢复状态；
+3. 生成「今日能否练、练什么强度」的决策与计划；
+4. 产出日/周/月报告，并通过钉钉推送；
+5. 将计划上传到课程库（Tredict）但不自动排期。
 
-| 触发 | 产出镜像标签 |
-|---|---|
-| `git push origin main`（日常） | `:latest` + `:sha-<短哈希>` |
-| `git push origin vX.Y.Z`（正式发版） | `:vX.Y.Z` + `:latest` |
+本系统把上述流程自动化，并在**风险过高时硬拦截**计划生成与上传。
 
-**正式发版必须打 git tag 并钉版本**，否则部署没有可追溯、可回滚的版本号：
+### 1.2 核心特性
+
+| 特性        | 说明                                              |
+| --------- | ----------------------------------------------- |
+| Garmin 同步 | `python-garminconnect` 独立鉴权，原始数据 append-only 落盘 |
+| FIT 解析    | 官方 Garmin FIT SDK 主解析 + fitdecode 交叉校验          |
+| 负荷与 ACWR  | Banister TRIMP（有氧按圈分段）+ 力量负荷，混合方法               |
+| 风险引擎      | 三态数据关卡（A/B/C）+ 四级优先级（P1–P4），规则注册表驱动，纯程序逻辑       |
+| AI 教练     | DeepSeek（OpenAI 兼容）：日报分析用 chat，深度分析用 reasoner   |
+| 计划生成      | 周计划 / 今日计划 / 12 周计划，受风险拦截约束                     |
+| 周期报告      | 日报、周报、月报，前端 ECharts 可视化                         |
+| 钉钉推送      | 群机器人 Webhook + 加签，含「查看完整报告」外链                   |
+| 运维台       | 健康检查、任务状态、故障注入与恢复、审计日志                          |
+| 单容器部署     | nginx + uvicorn + APScheduler，supervisord 托管    |
+
+### 1.3 非目标
+
+- 多用户 / 登录 / 权限系统
+- 实时推送（WebSocket）
+- 云端多租户 SaaS
+- 自动排期到第三方课表（仅上传课程库）
+
+---
+
+## 2. 技术栈与运行环境要求
+
+| 层        | 选型                                                        | 版本要求                      |
+| -------- | --------------------------------------------------------- | ------------------------- |
+| 语言       | Python                                                    | ≥ 3.12                    |
+| 后端框架     | FastAPI + Uvicorn                                         | ≥ 0.115 / ≥ 0.32          |
+| ORM / 迁移 | SQLModel + Alembic                                        | ≥ 0.0.22 / ≥ 1.14         |
+| 数据       | SQLite（单文件）                                               | 系统自带                      |
+| 调度       | APScheduler                                               | ≥ 3.10                    |
+| Garmin   | python-garminconnect                                      | ≥ 0.3.17                  |
+| FIT      | garmin-fit-sdk + fitdecode                                | ≥ 21.218 / ≥ 0.11         |
+| LLM      | openai SDK（DeepSeek）                                      | ≥ 1.50                    |
+| 前端       | React 18 + Vite 5 + TypeScript 5 + Tailwind 3 + ECharts 5 | 见 `frontend/package.json` |
+| 部署       | Docker + docker-compose（单容器）                              | 群晖 DS220+ 验证过             |
+
+**平台**：Linux / macOS / Windows（本地开发建议 Git Bash 或 WSL）；生产目标为群晖 DSM。
+
+---
+
+## 3. 安装
+
+### 3.1 克隆与目录
 
 ```bash
-# 1. 本地：代码合入 main 后打 tag（主版本对齐「期」，如三期 v3.0.0）
-git tag v3.0.0
-git sync                 # = git push origin main
-git push origin v3.0.0   # 触发 CI 构建 v3.0.0 镜像
-# 2. 等 GitHub Actions（.github/workflows/build-and-push.yml）构建成功
-# 3. NAS 上以 root 部署（见下）
+git clone https://github.com/hs40/health-system.git
+cd health-system
 ```
 
-版本号规则：`v<期>.<功能>.<修复>`，三期后续走 `v3.0.1` / `v3.1.0`；历史 `v1.0.8~10` 保留不删。
+数据目录约定（**不要**把 `data/` 提交到版本库）：
 
-### NAS 部署
+```
+data/
+├─ raw/              # Garmin 原始 JSON / FIT（应用层保证 append-only）
+├─ db/               # SQLite：health.db
+├─ audit/            # JSONL 审计
+└─ garmin_tokens/    # Garmin tokenstore
+```
 
-SSH `hs40@192.168.2.2:222`，进入部署目录 `/volume1/docker/health-system/`（内含
-`docker-compose.single.yml`、`.env`、`secrets/`、部署脚本），以 **root** 执行：
+### 3.2 后端依赖
+
+**推荐在项目外或项目内独立 venv，避免污染全局。**
+
+```bash
+cd backend
+python3.12 -m venv .venv
+# Linux/macOS
+source .venv/bin/activate
+# Windows
+# .venv\Scripts\activate
+
+pip install -U pip setuptools wheel
+pip install -e ".[dev]"
+```
+
+### 3.3 前端依赖
+
+```bash
+cd frontend
+npm install
+```
+
+### 3.4 环境变量
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少填写：
+#   GARMIN_EMAIL / GARMIN_PASSWORD
+#   LLM_API_KEY
+#   （可选）TREDICT_TOKEN、DINGTALK_WEBHOOK、QWEATHER 相关
+```
+
+**重要**：`.env` 中**不要**在值后面写行尾注释（`KEY=value  # 说明`），dotenv 会把注释当作值的一部分。
+
+### 3.5 数据库初始化
+
+应用启动时会调用 `init_db()`（见 `backend/app/main.py` lifespan），基于 SQLModel metadata 建表。生产/升级路径使用 Alembic：
+
+```bash
+cd backend
+# 查看当前迁移
+alembic current
+# 升级到最新
+alembic upgrade head
+```
+
+迁移脚本位于 `backend/app/db/migrations/versions/`。
+
+---
+
+## 4. 配置说明
+
+配置由 `backend/app/config.py` 的 `Settings`（pydantic-settings）统一加载，优先级：构造参数 > 环境变量 > `.env` > 默认值。
+
+| 配置项                                        | 默认值                                   | 说明                         |
+| ------------------------------------------ | ------------------------------------- | -------------------------- |
+| `APP_ENV`                                  | `dev`                                 | 运行环境标识                     |
+| `APP_HOST` / `APP_PORT`                    | `0.0.0.0` / `8000`                    | Uvicorn 监听                 |
+| `LOG_LEVEL`                                | `INFO`                                | 日志级别                       |
+| `RAW_DATA_DIR`                             | `/data/raw`                           | Garmin 原始数据目录              |
+| `DB_PATH`                                  | `/data/db/health.db`                  | SQLite 路径                  |
+| `AUDIT_DIR`                                | `/data/audit`                         | 审计 JSONL 目录                |
+| `GARMIN_EMAIL` / `GARMIN_PASSWORD`         | 空                                     | Garmin 账号（SecretStr）       |
+| `GARMIN_IS_CN`                             | `true`                                | 是否中国区                      |
+| `GARMIN_TOKENSTORE`                        | `/data/garmin_tokens`                 | Token 持久化目录                |
+| `TREDICT_TOKEN`                            | 空                                     | Tredict API Token          |
+| `LLM_PROVIDER` / `LLM_BASE_URL`            | `deepseek` / DeepSeek API             | LLM 配置                     |
+| `LLM_API_KEY`                              | 空                                     | 必填才启用 LLM                  |
+| `LLM_MODEL_DAILY` / `LLM_MODEL_REASONING`  | `deepseek-chat` / `deepseek-reasoner` | 模型                         |
+| `RISK_RULE_VERSION`                        | `0.2.0`                               | 风险规则版本（进入审计）               |
+| `DINGTALK_WEBHOOK` / `DINGTALK_SECRET`     | 空                                     | 钉钉机器人（空=禁用）                |
+| `APP_BASE_URL`                             | `http://hs.qingtianjian.com:18080`    | 报告外链前缀                     |
+| `SCHED_TZ`                                 | `Asia/Shanghai`                       | 调度时区                       |
+| `DAILY_JOB_CRON` 等                         | 见 `.env.example`                      | 日/周/月/睡眠重试/Tredict 同步 cron |
+| `DUMBBELL_WEIGHTS_KG` / `DUMBBELL_IS_PAIR` | 见代码默认                                 | 力量器材档位                     |
+
+密钥类字段使用 `SecretStr`，日志与 repr 自动脱敏。
+
+---
+
+## 5. 快速开始 / 使用说明
+
+### 5.1 本地一键启动（推荐）
+
+```bash
+# 项目根目录
+./scripts/dev.sh
+# 或 Windows 双击
+# dev.cmd
+```
+
+- 后端：`http://localhost:8000`（OpenAPI：`/docs`）
+- 前端：`http://localhost:5173`（Vite 代理 `/api` → 后端）
+
+仅后端或仅前端：
+
+```bash
+./scripts/dev.sh --backend-only
+./scripts/dev.sh --frontend-only
+```
+
+### 5.2 手动启动
+
+```bash
+# 后端
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# 前端（另一终端）
+cd frontend
+npm run dev
+```
+
+### 5.3 典型使用流程
+
+```mermaid
+flowchart LR
+    A[Garmin 同步] --> B[标准化入库]
+    B --> C[基线 / 负荷 / ACWR]
+    C --> D[风险判定]
+    D --> E[生成日报]
+    E --> F[LLM 分析]
+    F --> G[今日计划]
+    G --> H{风险拦截?}
+    H -->|P1/P2| I[不上传 / 不生成]
+    H -->|允许| J[上传课程库]
+    E --> K[钉钉推送]
+```
+
+1. **每日自动**（默认 07:30）：同步当天 → 补齐前一日活动与负荷 → 标准化 → 风险 → 日报 → LLM → 计划 → 钉钉。
+2. **手动触发**：前端「运维台」或 API `/api/ops/...`。
+3. **查看**：日报 / 周计划 / 周报 / 月报 / 数据趋势 / 训练负荷 / 运动训练详情。
+
+### 5.4 常用 API（摘录）
+
+| 方法   | 路径                          | 说明                 |
+| ---- | --------------------------- | ------------------ |
+| GET  | `/api/ops/health`           | 健康检查（DB、目录、依赖配置状态） |
+| POST | `/api/ops/sync`             | 触发同步               |
+| GET  | `/api/reports/daily/{date}` | 日报                 |
+| GET  | `/api/plans/...`            | 计划相关               |
+| GET  | `/api/activities/...`       | 活动列表与详情            |
+
+完整契约见启动后的 `/docs` 或前端 `openapi-typescript` 生成结果。
+
+### 5.5 NAS 生产部署（唯一现行方式）
+
+镜像由 GitHub Actions 构建并推送到 **ghcr.io/hs40/health-system**。
+
+构建前会先跑 `quality` job（ruff + 全量 pytest + 前端 `npm run build`），任一失败则不出镜像。
+
+| 触发                | 镜像标签                     |
+| ----------------- | ------------------------ |
+| push `main`       | `:latest` + `:sha-<短哈希>` |
+| push tag `vX.Y.Z` | `:vX.Y.Z` + `:latest`    |
+
+**正式发版必须打 tag**：
+
+```bash
+git tag v3.1.0
+git push origin main
+git push origin v3.1.0
+```
+
+NAS 上（示例路径 `/volume1/docker/health-system`）：
 
 ```bash
 sudo -i
 cd /volume1/docker/health-system
-HS_TAG=v3.0.0 bash nas_deploy_single.sh
+HS_TAG=v3.1.0 bash nas_deploy_single.sh
 ```
 
-`HS_TAG` **必填**：compose 与脚本均用 `${HS_TAG:?...}`，缺失直接报错退出，不会静默
-回退 `latest`（`latest` 由 push main 持续覆盖，不带版本号无法追溯、无法回滚）。
+- 访问：`http://<NAS-IP>:18080/`
+- 健康检查：`curl -fsS http://127.0.0.1:18080/api/ops/health`
+- 回滚：换 `HS_TAG` 再跑同一脚本（不动 `data/`）
 
-脚本自动完成：`docker pull` → 端口检查 → `docker rm -f hs-app` → `compose up -d` →
-最多 120s 健康检查。所有持久数据在 `./data` 挂载卷，**重建容器不丢数据**。
-访问 `http://<NAS-IP>:18080/`；健康检查 `curl -fsS http://127.0.0.1:18080/api/ops/health`。
+数据重灌与镜像发版分离，见 `scripts/pack_data.sh`。
 
-> 该模式下 `docker ps` 查不到 `hs-scheduler` 属正常（三进程由 supervisord 托管），
-> 排障用 `docker exec hs-app supervisorctl status`。ghcr.io 包为 Public，一般无需
-> `docker login`；若拉取失败，在 root 下 `docker login ghcr.io -u hs40 -p <PAT>`。
-> 可选加速：`deploy/setup_nas_proxy.sh` 配 Docker daemon 代理。
+> ⚠️ **禁止将 18080 直接暴露到公网**
+>
+> 本系统是**单用户、无登录、无鉴权**设计（见 `AGENTS.md` §1），且 CORS 允许任意来源。
+> 一旦端口暴露到公网，任何人都能读取你的全部健康数据，并能调用同步、计划上传、
+> 故障恢复等写操作。只允许在内网/VPN 内访问；确需远程访问请在 NAS 前置反向代理并
+> 自行加 Basic Auth 或 mTLS，且不要关闭代理的鉴权。
 
-### 回滚
 
-```bash
-cd /volume1/docker/health-system
-HS_TAG=v1.0.10 bash nas_deploy_single.sh   # 按标签回滚，秒级、不重新构建、不动 data/
-```
+---
 
-> 数据重灌（把本机 `data/` 同步到 NAS）用 `scripts/pack_data.sh`，与镜像发版是两件事。
+## 6. 常见问题与排错
 
-## 本地开发
+| 现象             | 可能原因                    | 处理                                              |
+| -------------- | ----------------------- | ----------------------------------------------- |
+| Garmin 同步失败    | 账号/密码错误、Token 过期、网络/DNS | 检查 `.env`；健康检查看 `garmin` 项；群晖需显式 DNS（见 compose） |
+| LLM 分析显示失败     | 未配置 `LLM_API_KEY`       | 配置后重启；健康检查 `llm` 项                              |
+| 钉钉不推送          | `DINGTALK_WEBHOOK` 为空   | 留空即禁用；填入后生效                                     |
+| 日报「前一日训练回顾」为空  | 前一日 activities 未同步      | 日任务会 best-effort 回补；也可手动触发同步                    |
+| 容器内域名解析失败      | 群晖 Docker 内置 DNS 问题     | compose 已显式指定 `dns: 192.168.2.1` 与 `223.5.5.5`  |
+| 端口被占用          | 本地 8000/5173 冲突         | `BACKEND_PORT` / `FRONTEND_PORT` 覆盖             |
+| Alembic 与模型不一致 | 手工改表或漏跑迁移               | `alembic upgrade head`；必要时检查 `models.py` 与版本脚本  |
 
-### 一键启动（推荐）
+更多运维细节见前端「运维台」与审计日志（`data/audit/`）。
 
-双击仓库根目录的 **`dev.cmd`**，或在 Git Bash 里执行：
+---
 
-```bash
-./scripts/dev.sh                   # 同时启动 后端(:8000) + 前端(:5173)，Ctrl+C 一起停止
-./scripts/dev.sh --backend-only    # 只启动后端
-./scripts/dev.sh --frontend-only   # 只启动前端
-```
+## 7. 验证方式
 
-- 前端页面：http://localhost:5173 ｜ 后端健康：http://127.0.0.1:8000/api/ops/health
-- 日志：`.dev-logs/backend.log`、`.dev-logs/frontend.log`
-- 端口已被占用时自动跳过，不会重复启动或报端口冲突
-
-### 首次安装依赖（只需一次）
+### 7.1 单元与集成测试
 
 ```bash
-# 后端依赖
 cd backend
-py -3.12 -m venv .venv
-./.venv/Scripts/python.exe -m pip install -e ".[dev]" -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# 前端依赖
-cd ../frontend
-npm install --registry=https://registry.npmmirror.com
+source .venv/bin/activate
+# 数据目录会被 conftest 重定向到临时目录，不会污染仓库
+python -m pytest tests/ -q
 ```
 
-### 手动启动（两个终端，等价于 dev.sh）
+**实际验证结果（2026-11-07，本地开发机，FIT 双库齐全）**：
+
+- `python -m pytest tests/ -q` → **1025 passed**（无跳过、无失败）
+- `ruff check app/ scripts/ tests/` → 全绿
+- `npm run build` → 通过（类型检查 + 产物构建）
+
+CI 的 `quality` job 覆盖同样三项；任一失败则不产出镜像。
+
+### 7.2 静态检查
 
 ```bash
-# 终端 1：后端
-cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-# 终端 2：前端
-cd frontend && npm run dev        # http://localhost:5173（已代理 /api → :8000）
+cd backend
+ruff check app/ scripts/ tests/
+# 可选
+mypy app/
 ```
 
-> - vite 监听在 IPv6 `[::1]:5173`，请用 **`localhost:5173`** 访问（`127.0.0.1:5173` 可能不通）。
-> - 日报页默认日期为「今天」；若当天尚未同步会显示「无数据」，在页面点「同步数据」即可（本机默认不跑调度器）。
-> - 同步/生成日报前会**自动回补昨天的活动并补算其负荷**；同一天多次运动会按 `activityId` **自动合并**（5 天窗口内），不会因首次写盘而漏掉后来的训练。「昨日训练回顾」与 ACWR 图不再依赖宿主 23:00 的 `daily_sync.py` 定时是否安装。
-> - 07:30 若睡眠数据不完整（有入睡无起床，或 Garmin 返回全 null 占位），当天日报/计划/钉钉推送会**延后**：08:30–11:30 每小时重试（重试会用窗口刷新把占位数据更新为完整记录）、12:00 兜底；到 12:00 无论是否完整都生成。
+### 7.3 前端构建
 
-## 阶段进度
+```bash
+cd frontend
+npm run build
+```
 
-- [x] 阶段 1：需求基线 + 开发 Plan（v3，已确认）
-- [x] 阶段 2 / A：脚手架、契约、DB、适配器（Garmin / Tredict / LLM）、领域层（基线 / 负荷 / 风险 / 质量 / 处方）、日报页 + 运维台
-- [x] 阶段 B：周报 + 周计划（编辑 + AI 评估 + 用户确认）+ 数据趋势页
-- [x] 阶段 C：月报 + 长期分析 + 滚动 12 周计划
-- [x] 阶段 D：业务规则 / 故障注入 / 隐私测试、部署与回滚演练
-- [x] 部署：群晖 DS220+ 实机部署（V10 ✅）、Garmin 本地回填 469 天 + 标准化完整性（V11 ✅）、Tredict 拉取 + 差集上传（V6 ✅）
-- [x] 收尾：V8 可调哑铃单只/成对（✅ 成对，2.5/3/4/5.5/6.5/7/9.5 kg）、V9 派生指标口径登记表（✅ [`docs/派生指标口径登记表.md`](./docs/派生指标口径登记表.md)）
-- [x] 负荷 / ACWR 接入日报（✅ D-2 收敛：新增 `activities` 数据集 + `standardize_activities`，`generate_daily` 回填 `load`/`acwr`）
-- [x] 训练负荷分层重构 + Tredict 验证 + 图表（✅ 2026-10-20：`mixed_banister_strength_v1` 分层引擎、加权验证脚本、`/load` 图表；需求报告 §13.1 五项闭环，详见 [`docs/训练负荷与 ACWR：需求与实施.md`](./docs/训练负荷与%20ACWR：需求与实施.md)）
-- [x] 周计划卡片「日报已调整」+ 周报执行态对比（✅ 2026-10-21：`cards` 现算带五项详情、日报带「前一日完成度」、周报 `execution` 六态聚合；§12.3/§12.4 收敛，强度同区判定为**候选口径** L-11）
-- [x] 同步链路整改（✅ 2026-10-21）：raw 为唯一事实源——废弃 `garmin_activity` 中间表（迁移 `e8b2c5d1f4a7`，上传/校验改读 `app/storage/activity_source.py`）；Tredict 体重上传改比内容（`bodyvalues_todo`，修 6 条体重传不上去）；校验改递归叶子比对（`deep_diff`，消除 156 条 schema 假红）+ 双向覆盖 `[C0]`（专治漏传）+ 当日未完成数据豁免；失败可见性：消息中心推送 + 运维台「数据同步状态」卡片（`GET /api/ops/sync-status`）；24 数据集分批回补 CLI `scripts/backfill_garmin_datasets.py --all`。实测差异合计 0、755 passed，详见 [`docs/数据来源与同步链路核定报告.md`](./docs/数据来源与同步链路核定报告.md) 第 12 章
-- [x] **风险规则引擎与硬拦截全量重设计（✅ 2026-10-22）**：旧 R-001~R-008 三级体系退役，改为 **P1–P4 四级优先级** + **A/B/C 三态数据质量关卡**（`RULE_VERSION=0.2.0`）；硬拦截分两级（P1 拦生成+上传 / P2 只拦上传）；ACWR 首次进入风险判定（缺失沿用 ≤3 天快照并打 `acwr_stale`，仍缺失降 C 态）；新增 `sleep_score` / `body_battery_morning` 两列并回填 477 天；`daily_report.payload.risk` 整体删除，权威数据落 `risk_assessment` 表；前端四页面同步改造。816 passed。详见 [`docs/安全规则登记表.md`](./docs/安全规则登记表.md)（§5 阈值清单 / §5.2 校准流程 / §5.3 复核重点）
-- [x] **身体电量口径纠正（✅ 2026-10-22）**：发现前端「身体电量（晨）」长期取的是 `body_battery_wake`（`bodyBatteryMostRecentValue`）—— 那是**同步时刻残值**，傍晚任务运行时当天已近耗尽，近 60 天中位数仅 **5**，故日报卡片显示 38、趋势页 30 天全部偏低。真晨起值是 `body_battery_morning`（`bodyBatteryAtWakeTime`，同窗口中位数 **56**）。修正：标准层补暴露 `bodyBatteryMorning` / `sleepScore`（此前从未进入 `/standard`、`/series` 白名单）；日报 `recovery` 两口径并列；前端日报卡片 / 趋势页 / 溯源弹层全部改接晨起值，残值改名「身体电量（同步时刻）」；LLM 外发移除残值（隐私白名单同步收紧）；`scripts/backfill_recovery_fields.py` 回填历史 475 天 payload。**口径铁律：`body_battery_wake` 仅排查用，不得当「晨起」展示、判定或外发**。819 passed
-- [x] **决策落地第一批（✅ 2026-10-24 ~ 25）**：`T-2` 设 `chunkSizeWarningLimit: 700`（vendor-echarts 633.75 kB，构建无告警）；`L-12③` `verify_activity` 支持 `today` 注入并豁免当天活动（A 路「云端有本地无」、C0 路「本地有未上传」都豁免，解析不出日期的不豁免）；`G-17` 删 `DataQualityRow` + `GET /api/data/quality` + 迁移 `b3f7c1d8e6a2`（可回滚）；`G-16` 新增 `domain/algo_version.py` + `acwr.acwr_version`（迁移 `c9d2e4f6a8b1`）+ 三类报告 payload 与 `/load-series` 的 `algo_versions`，**只标记不回填**；`G-7` 第一步：活动同步失败只进日报 `limitations`，不改 grade、不拦计划。**880 passed**，`ruff` 全绿
-- [x] Tredict 全量拉取核实与补齐（✅ 2026-10-21）：官方 26 端点逐一核实（110 次只读 GET）——活动详情补 `extraValues=1`（Tredict 自算 13 指标：effort 三源 / vo2max / runningEffectiveness / speedIndex …+ weather，历史 303 条 refresh 重拉）；`plannedTrainingList`/`equipmentList` 账号为空不再拉；Tredict 侧 FIT（本地镜像）不拉回；Form/Fitness/customFields/records 端点不存在（404）；新增 D 环详情抽样校验（capacity/zones 修订重算 effort 的快照腐烂检测）。《核定报告》§4 全量重写
+### 7.4 健康检查确认安装成功
 
-**文档**（2026-10-24 全量整理）：`docs/` 由 21 份收敛到 **14 份**，另建 `docs/archive/` 存放 12 份已完成使命的历史文档（只读存档，见其 README 说明归档原因与替代去向）。合并了 5 组重叠文档（风险阈值校准→安全规则登记表 §5、NAS 部署指南→部署与回滚 §11–§18、自动化启用范围→运行与恢复说明 §11、策略版本与回退→archive、ACWR 需求报告+重构计划→《训练负荷与 ACWR：需求与实施》）。同时修正 5 处**会直接误导开发**的过期陈述（派生指标 §B-1 的 p10/全历史口径、核定报告 §0「总体不满足」摘要、NAS 复验 N-1~N-5「未执行」、一期项目报告 §4 裸陈述、二期开发 Plan 引用已删代码）。
+```bash
+curl -fsS http://localhost:8000/api/ops/health | jq .
+```
 
-**未完成事项**：**10 项**待你决策，唯一入口是 [`docs/待验证事项.md`](./docs/待验证事项.md)（未完成事项总账，每条带编号/类型/影响/出处/你的决策五列）。按类型分：功能未做 1（G-7 第二步）、阈值待校准 6、环境待执行 3。**原 C 组（口径待确认）已全部有结论并移入「已知限制」**。。已按用户决策**取消**：`G-11` 分类型 ACWR（统一用全局）、`T-5` 12 周计划新旧对比。
+应返回各依赖 `ok` 状态（未配置的外部服务会明确标为 not configured，属正常）。
 
-**本轮已落地（2026-10-24 ~ 26，881 passed）**：`T-2` ECharts chunk 告警消除；`L-12③` 活动校验「当天不计入差异」（消每日 exit 3 假红）；`G-17` 删除 `data_quality` 死表与恒 404 接口（业务表 26 → 25）；`G-16` 算法口径版本号（ACWR / 质量分级 / 周月聚合，只标记不回填）；`G-7` 第一步——活动同步失败只进日报 `limitations` 披露；**`U-8` 有氧负荷改 FIT 圈分段**（method `v2`、`ACWR_VERSION` `1.1.0`，480 天全套重算：98/221 个负荷日变化、中位 +2.68%，风险分布 P1 60 / P2 177 / P3 27 / P4 216）；**`L-7` C 态放行恢复类规则**（24 个 C 态日中 5 天本应 P1、2 天本应 P2）；`L-8` 多源占位改显式不可达；`G-15` 新增活动字段清单（登记表 §A-2）；`T-13` 时长口径文档关闭；`L-10` 授权判据写入安全规则 §7.1；**`E27` 策略自动回退整体删除**（无自动触发源，-358 行服务 + 端点 + 15 条测试）；**P1/P2 触发原因展示**（日报结论区显示「规则 + 实测值 vs 阈值」）；**`T-6` 运维台结构对齐**（`DateNav` + `TierNav`，图表保持静态）；**周报/月报随重算一起重生成**（`regenerate_aggregates`）；**`algo_versions` 增加 `load` 键、`RULE_VERSION` 升 `0.3.0`**；**重生成日报从审计恢复同步披露**、**多源冲突降级披露**、**删 `rule_version` 死表**（业务表 25 → 24）；**`userRoles` 假红修复**（Garmin 回显的权限 scope 列表被当数据比对，302/304 条假红 → 实机复验差异合计 **0**）；**③ 风险规则注册表驱动执行**（`RuleSpec` 承载条件/阈值/输出标志/人话原因/专属参数，`judge_priority` 收敛为通用引擎，「文字阈值 vs 代码阈值」结构性漂移消除）；**② 标准字段白名单收敛**（新增 `domain/standard_fields.py` 唯一注册表，`data.py`/`verify.py` 派生，**修掉 verify 漏比 `sleep_score`/`body_battery_morning` 的校验盲区**，20→22）；**① report_service 拆分**（1339 行单体 → `reports/{daily_report,period_report,goal_progress,report_store}` 四模块 + 40 行门面，调用方零改动；顺带加日期过滤消除全表扫描、抽 `_sum_by_sport`/`_priority_counts` 去重）；**④ 前端报告页去重**（`lib/loadSeries.ts` + `hooks/reportQueries.ts`，统一 queryKey 修 `'loadSeries'`/`'load-series'` 缓存撕裂，三页 `n()`/`days`/`invalidate` 重复收敛）；**⑥ 域逻辑下沉**（`_valid_zone`→`domain/plan_rules.py`、`_week_start_of`/`_monday_of`→`domain/dates.py`、处方兜底→`domain/prescription.py`）；**日报「前一日运动训练回顾」空白修复**（`generate_daily` 的 `yesterday_training` 此前恒为 None，前端改读真实活动）；**⑦ 重算 checkpoint 结构化**（JSON + 修复 `run()` finish 覆盖 `pending` 的漏重算 bug）；**⑧ verify 跨 seam 一致性测试**（`BODYVALUES_COMPARABLE == BODYVALUES_READABLE`、`HEALTH_RAW_COMPARABLE` 键对齐 `standardize`）；**ACWR 区间漂移修复**（`/load-series` 预热改为逐日 `D−56`，28/90 天视图同日 ACWR 一致并与日报对齐）；**钉钉日报推送**（`adapters/dingtalk.py` 加签客户端 + `POST /reports/daily/push` 手动按钮 + `run_daily_job` 计划生成后自动推；配置 `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` / `APP_BASE_URL`；未配置时按钮显示但禁用、定时任务跳过）。证据见总账第二部分 **V12–V35**。
+---
 
-**已验证**：V1–V35 全部闭环（证据保留在 [`docs/待验证事项.md`](./docs/待验证事项.md) 第二部分）。**最优先的待收敛项是风险阈值校准**（总账 `L-1`/`L-3`/`L-4`）：P1–P4 全部阈值为用户给定候选值，480 天全量回放实测 **P3 27 次**（高于预期的年 5–8 次）、**P1 60 天**（约每 8 天），按用户决定暂不调参、优先复核 ACWR 加量上限与睡眠/电量阈值（见 [`docs/安全规则登记表.md`](./docs/安全规则登记表.md) §5.3）。其余候选口径：完成度判定的 2 分钟时长容差与「强度同区」（`L-11`）；REQ-PRIV-002 授权范围需求已于 2026-10-20 撤销（新增外发路径须先落授权校验，`L-10` 硬约束）。
+## 8. 项目结构
 
-## 关键约束（来自 Plan）
+```
+health-system/
+├─ backend/                      # FastAPI 后端
+│  ├─ app/
+│  │  ├─ api/                    # REST 路由（薄层）
+│  │  ├─ adapters/               # Garmin / Tredict / LLM / 天气 / 钉钉
+│  │  ├─ domain/                 # 纯计算：负荷、风险、基线、处方、策略…
+│  │  │  ├─ load/                # ACWR、TRIMP、运动类型
+│  │  │  └─ strength/            # 力量动作库与注释
+│  │  ├─ services/               # 应用服务与流水线
+│  │  │  └─ reports/             # 日/周/月报生成
+│  │  ├─ storage/                # SQLite / 审计 / 标准层仓储
+│  │  ├─ orchestrator/           # 调度器、任务状态、补算 CLI
+│  │  ├─ parsers/                # FIT 解析
+│  │  ├─ schemas/                # Pydantic 契约
+│  │  ├─ db/                     # models + Alembic
+│  │  ├─ config.py
+│  │  ├─ errors.py
+│  │  └─ main.py                 # FastAPI 入口
+│  ├─ tests/                     # 大量单元/集成测试
+│  ├─ scripts/
+│  ├─ pyproject.toml
+│  ├─ alembic.ini
+│  └─ Dockerfile
+├─ frontend/                     # React + Vite + TS + Tailwind
+│  └─ src/
+│     ├─ pages/                  # 日报/周报/月报/计划/负荷/训练…
+│     ├─ components/
+│     ├─ api/
+│     └─ design/
+├─ deploy/                       # 单容器 Dockerfile、nginx、supervisord、NAS 脚本
+├─ scripts/                      # dev.sh、pack_data.sh、各类 probe
+├─ docker-compose.single.yml
+├─ .env.example
+├─ AGENTS.md                     # 给协作者与 AI 代理的约定
+├─ README.md                     # 本文档
+└─ ARCHITECTURE_REVIEW.md        # 架构诊断与改进建议
+```
 
-- 原始 Garmin 数据**只读**、永久保留；派生数据与原始分离。
-- **P1（强制休息）→ 不生成、不上传当天训练计划；P2（减量）→ 可生成、不上传**（硬规则，模型不得覆盖）。
-- **C 态（ACWR 缺失）负荷类规则不成立、不拦截负荷维度；但恢复类规则（睡眠/电量/HRV/RHR）照常判定，恢复极差仍触发 P1/P2**（L-7，2026-10-25）；B 态关闭加量通道，P1 仍可经剩余维度触发。
-- 云端外发仅限**聚合指标 + 原始摘要**，且记录传输目的/范围/模型/结果。
-- 任务状态须区分「成功/部分成功/失败/待重试/**结果未知**」；未知时先核查再动作。
+**分层原则**（见 `AGENTS.md`）：
+
+- `api/`：只做参数校验与编排，不写业务逻辑。
+- `domain/`：纯函数、无 IO。
+- `services/`：编排 domain + storage + adapters。
+- `adapters/`：外部系统边界。
+- `storage/`：持久化细节。
+
+---
+
+## 9. 维护者视角
+
+### 9.1 模块地图（简）
+
+- **入口**：`backend/app/main.py` → 各 `api/*` 路由。
+- **日闭环**：`orchestrator/scheduler.py` → `services/daily_pipeline.py` → `report_service` / `coach_service` / `plan_service` / `dingtalk_service`。
+- **风险核心**：`domain/risk.py` → `domain/priority.py` + `domain/rule_registry.py`（规则表驱动）。
+- **负荷核心**：`domain/load/`（`compute_day`、ACWR、按运动类型的 TRIMP/力量公式）。
+- **数据边界**：原始数据**不入库**，仅标准化与派生数据进 SQLite；原始以文件形式挂载。
+
+### 9.2 关键约定
+
+- 单用户、本地优先；CORS 在本地可放宽，生产由 Nginx 同源代理。
+- 风险判定**禁止**被 LLM 覆盖（REQ-RISK-002）。
+- P1 不生成计划、P2 不允许上传（REQ-RISK-003）。
+- 规则与算法版本进入审计与报告，支持复盘。
+
+### 9.3 已知技术债与指向
+
+详见 **[ARCHITECTURE\_REVIEW.md](./ARCHITECTURE_REVIEW.md)**，摘要（截至 2026-11-07）：
+
+已解决（v3.1.0）：
+
+1. ~~健康检查混入 Windows/F: 盘硬编码路径~~ → 判定只用 `Settings`（A.2.1）。
+2. ~~CI 只构建不测试~~ → 新增 `quality` job 前置门禁（A.9.1）。
+3. ~~日流水线吞异常只留步骤字符串~~ → 失败结构化写入 Fault 表，运维台可查（A.4.2）。
+
+尚存：
+
+1. 领域与服务层部分文件体量较大（`verify.py` 1016 行、`daily_report.py` 725 行、`plan_service.py` 733 行），可继续拆分（A.1.2，P1）。
+2. 配置中存在「候选阈值待验证」注释，需产品化时固化或外置（A.5.2，P1）。
+3. 调度器依赖较隐晦（多处函数内延迟导入），可显式化为任务注册表（A.2.2，P2）。
+4. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
+
+### 9.4 给 AI 编码代理
+
+请先阅读根目录 **`AGENTS.md`**，再动手改代码。其中明确了分层、禁止事项与测试入口。
+
+---
+
+## 许可证与隐私
+
+本仓库为个人项目源码。`docs/` 与需求报告中可能含个人健康数据与内网拓扑，**不纳入版本库**。使用时请自行妥善保管 `.env`、`data/` 与 secrets。

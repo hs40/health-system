@@ -20,7 +20,50 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # 质量门禁：镜像构建的前置条件（ARCHITECTURE_REVIEW A.9.1）。
+  # 测试/静态检查/前端类型检查任一失败 → build-and-push 不启动，杜绝「没跑测试也能发版」。
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend deps
+        # 必装全量依赖（含 fitdecode / garmin-fit-sdk），否则 FIT 相关用例会被跳过
+        run: pip install -e "./backend[dev]"
+
+      - name: Ruff
+        run: ruff check app/ scripts/ tests/
+        working-directory: backend
+
+      - name: Pytest
+        run: python -m pytest tests/ -q
+        working-directory: backend
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: frontend
+
+      - name: Frontend build (type check)
+        run: npm run build
+        working-directory: frontend
+
   build-and-push:
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: read

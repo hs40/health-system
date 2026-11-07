@@ -202,3 +202,63 @@ class TestExplicitTagRequired:
         assert "nas_deploy_single.sh" in content, (
             "pack_data.sh 的 NAS 侧提示应指向现行单容器部署脚本"
         )
+
+
+# ---------- CI：测试必须先于镜像发布（ARCHITECTURE_REVIEW A.9.1 / 阶段 0） ----------
+
+
+class TestCiQualityGate:
+    """`.github/workflows/build-and-push.yml` 必须先跑质量门禁再构建镜像。
+
+    原 workflow 只有 build+push：测试没跑也能发布镜像，质量红线形同虚设。
+    契约：存在 ``quality`` job，且 ``build-and-push`` 通过 ``needs`` 依赖它。
+    """
+
+    @staticmethod
+    def _workflow_text() -> str:
+        return _read(REPO_ROOT / ".github" / "workflows" / "build-and-push.yml")
+
+    def test_has_quality_job(self):
+        text = self._workflow_text()
+        assert "\n  quality:" in text, "workflow 缺少 quality job"
+
+    def test_build_depends_on_quality(self):
+        text = self._workflow_text()
+        assert "needs: quality" in text or "needs: [quality]" in text, (
+            "build-and-push 未声明 needs: quality —— 质量门禁失败仍会发布镜像"
+        )
+
+    def test_quality_runs_backend_tests(self):
+        text = self._workflow_text()
+        assert "pytest" in text, "quality job 未运行 pytest"
+
+    def test_quality_runs_ruff(self):
+        text = self._workflow_text()
+        assert "ruff check" in text, "quality job 未运行 ruff check"
+
+    def test_quality_runs_frontend_build(self):
+        text = self._workflow_text()
+        assert "npm run build" in text, "quality job 未运行前端构建（类型检查）"
+
+
+# ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
+
+
+class TestPublicExposureWarning:
+    """系统无鉴权：文档必须显式禁止把端口暴露到公网。
+
+    这不是可选的「注意事项」。README 是唯一用户文档，任何人照着它部署；
+    少了这段警示，最容易发生的误操作就是把 18080 映射到公网。
+    """
+
+    def test_readme_warns_against_public_exposure(self):
+        content = _read(REPO_ROOT / "README.md")
+        assert "禁止将 18080 直接暴露到公网" in content, (
+            "README 缺少「禁止将 18080 直接暴露到公网」警示"
+        )
+
+    def test_agents_md_lists_exposure_as_forbidden(self):
+        content = _read(REPO_ROOT / "AGENTS.md")
+        assert "18080" in content and "公网" in content, (
+            "AGENTS.md「不要做」未把公网暴露列为禁止项"
+        )

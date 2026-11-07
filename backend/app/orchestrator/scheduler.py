@@ -9,7 +9,9 @@
 设计约束：
 - 每步以任务状态机登记（幂等、可重试）；
 - 高风险/硬拦截 → **不上传计划**（REQ-RISK-003）；
-- 任一步失败不阻断后续日期的调度。
+- 任一步失败不阻断后续日期的调度；
+- 下游步骤失败除写入 ``out["steps"]`` 外，还**结构化登记到 Fault 表**，
+  供运维台查询（ARCHITECTURE_REVIEW A.4.2）。
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
 from app.db.session import init_db, session_scope
+from app.domain.fault_classifier import FaultKind
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -31,6 +34,29 @@ logging.basicConfig(
 logger = logging.getLogger("hs.scheduler")
 
 _running = True
+
+
+def _record_step_fault(session, *, step: str, day: dt.date, exc: BaseException) -> None:
+    """把一次下游步骤失败登记为一般技术故障（可观测性，不阻断主流程）。
+
+    为什么是 ``generalTech``：步骤失败的后果是「今天少了日报分析 / 没推送 /
+    没上传」，属于可重试的技术故障；升级成需要人工确认的重大故障，会让运维台
+    每天堆满待确认条目，反而淹没真正的安全/数据可信度告警。
+
+    登记本身失败只记日志——可观测性不能变成新的故障源。
+    """
+    from app.services.recovery_service import report_fault
+
+    try:
+        report_fault(
+            session,
+            kind=FaultKind.GENERAL_TECH.value,
+            impact_scope=f"{step}@{day.isoformat()}",
+            fix_measures=f"{type(exc).__name__}: {exc}",
+        )
+    except Exception as fault_exc:  # noqa: BLE001 — Fault 写入失败不得中断日任务
+        logger.warning("登记故障失败 step=%s day=%s: %s", step, day, fault_exc)
+
 
 
 def _sync_daily(session, target, settings, *, refresh=False):
@@ -64,6 +90,7 @@ def _run_downstream(session, target, settings, out: dict, sync) -> None:
         out["analysis_summary"] = analysis.get("summary")
     except Exception as e:  # noqa: BLE001
         out["steps"]["analysis"] = f"failed: {e}"
+        _record_step_fault(session, step="analysis", day=target, exc=e)
 
     ts = None
     try:
@@ -72,6 +99,7 @@ def _run_downstream(session, target, settings, out: dict, sync) -> None:
     except Exception as e:  # noqa: BLE001
         ts = None
         out["steps"]["plan"] = f"failed: {e}"
+        _record_step_fault(session, step="plan", day=target, exc=e)
 
     # 日报推送（钉钉）：放在计划生成之后，保证「今日安排」准确；
     # 无计划也推（写「无计划/休息」）；推送失败只记录，绝不阻断主流程。
@@ -79,6 +107,7 @@ def _run_downstream(session, target, settings, out: dict, sync) -> None:
         out["steps"]["dingtalk"] = push_daily_report(session, target, settings)
     except Exception as e:  # noqa: BLE001
         out["steps"]["dingtalk"] = f"failed: {e}"
+        _record_step_fault(session, step="dingtalk", day=target, exc=e)
 
     if ts is None:
         return
@@ -90,6 +119,7 @@ def _run_downstream(session, target, settings, out: dict, sync) -> None:
         out["garmin_workout_id"] = result.garmin_workout_id
     except Exception as e:  # noqa: BLE001
         out["steps"]["upload"] = f"failed: {e}"
+        _record_step_fault(session, step="upload", day=target, exc=e)
 
 
 def _run_daily_core(session, target, settings, now, *, retry: bool) -> dict:

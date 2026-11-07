@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from datetime import date as dt_date
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
@@ -47,29 +45,18 @@ def health(session: Session = Depends(get_session)) -> HealthResponse:
         deps.append(DepStatus(name=name, ok=path.exists(), detail=str(path)))
 
     # 外部依赖：仅检查是否已配置（不在健康检查中发起真实调用）
+    # 唯一真相源 = Settings：不探测开发机路径（ARCHITECTURE_REVIEW A.2.1）。
     tokenstore = settings.garmin_tokenstore / "tokens.json"
-    plugin_session = Path(
-        os.path.expanduser(
-            "~/AppData/Local/dsh-plugin-garmin-connect/accounts/personal-cn.session.json"
-        )
-    )
-    garmin_ready = tokenstore.exists() or plugin_session.exists() or bool(settings.garmin_email)
     if tokenstore.exists():
-        garmin_detail = f"tokenstore={tokenstore}"
-    elif plugin_session.exists():
-        garmin_detail = "可用插件 session 引导（尚无本地 tokenstore）"
+        garmin_ready, garmin_detail = True, f"tokenstore={tokenstore}"
     elif settings.garmin_email:
-        garmin_detail = "credentials configured"
+        garmin_ready, garmin_detail = True, "credentials configured"
     else:
-        garmin_detail = "not configured"
+        garmin_ready, garmin_detail = False, "not configured"
     deps.append(DepStatus(name="garmin", ok=garmin_ready, detail=garmin_detail))
-    tredict_cfg = Path(r"F:/WorkBuddy AI/Garmin_Tredict/_tools/tredict.config.json")
-    if settings.tredict_ready:
-        tredict_ready, tredict_detail = True, "token configured"
-    elif tredict_cfg.exists():
-        tredict_ready, tredict_detail = True, f"token from {tredict_cfg.name}"
-    else:
-        tredict_ready, tredict_detail = False, "not configured"
+
+    tredict_ready = settings.tredict_ready
+    tredict_detail = "token configured" if tredict_ready else "not configured"
     deps.append(DepStatus(name="tredict", ok=tredict_ready, detail=tredict_detail))
     deps.append(
         DepStatus(

@@ -1,0 +1,577 @@
+# 架构诊断与改进建议（ARCHITECTURE_REVIEW）
+
+> 基于对仓库全部源码与配置的只读分析（2026-11-07）。  
+> **证据原则**：每个问题均附具体文件路径与关键符号；无法从代码确认的结论明确标注「基于推断/未能确认」。
+
+---
+
+## 执行进度（截至 2026-11-07，v3.1.0）
+
+| 编号 | 项 | 状态 |
+|---|---|---|
+| A.2.1 / C.4.1 | `api/ops.py` 移除开发机硬编码路径 | ✅ 已完成 |
+| A.9.1 | CI 前置 quality 门禁（ruff + pytest + 前端 build） | ✅ 已完成 |
+| A.4.2 / C.4.5 | 下游步骤失败结构化写入 Fault 表 | ✅ 已完成 |
+| A.6.1 | 公网暴露风险声明（README §5.5） | ✅ 已完成 |
+| A.3.2 | FIT 双依赖测试稳定性 | ✅ 已确认非缺陷（本地双库齐全 65 passed）；CI 已必装全量依赖 |
+| A.1.2 / C.4.2~C.4.4 | 大文件拆分（verify / daily_report / plan_service） | ⬜ 未开始 |
+| A.2.2 | 调度依赖显式化 | ⬜ 未开始 |
+| A.5.2 | 规则阈值校准流水线 | ⬜ 未开始 |
+| A.8.1 | 统一结构化日志字段 | ⬜ 未开始 |
+
+> 状态说明：✅ = 已随 `v3.1.0` 落地并有测试锁定；⬜ = 仍在待办。
+
+---
+
+## 目录
+
+- [A. 问题诊断 + 改进方向 + 优先级](#a-问题诊断--改进方向--优先级)
+- [B. 分阶段重构路线图 + 风险与收益评估](#b-分阶段重构路线图--风险与收益评估)
+- [C. 模块/文件级重构方案](#c-模块文件级重构方案)
+
+---
+
+## A. 问题诊断 + 改进方向 + 优先级
+
+### A.1 分层与模块边界
+
+#### A.1.1 总体分层清晰，执行较一致（正向）
+
+**现象**：`AGENTS.md` 与目录结构明确区分：
+
+- `api/`：薄路由
+- `domain/`：纯计算、无 IO
+- `services/`：编排
+- `adapters/`：外部边界
+- `storage/`：持久化
+
+**证据**：
+
+- `backend/app/main.py`：仅注册 router 与全局异常处理。
+- `backend/app/domain/risk.py`、`domain/priority.py`、`domain/load/*`：无 Session、无 httpx。
+- `backend/app/services/daily_pipeline.py`：显式编排 adapter + storage + domain。
+
+**影响**：可测试性强（domain 可单测），边界清晰利于演进。
+
+**改进方向**：保持；在 code review 中把「domain 禁止 IO」写进 CI 规则（例如 import-linter 或简单 AST 检查）。
+
+**优先级**：P2（巩固优势）。
+
+---
+
+#### A.1.2 服务层与报告层文件体量偏大
+
+**现象**：部分核心文件 LOC 较高，职责仍可再拆。
+
+**证据**（`wc -l`）：
+
+| 文件                                              | 约行数  |
+| ----------------------------------------------- | ---- |
+| `backend/app/domain/verify.py`                  | 1016 |
+| `backend/app/domain/rule_registry.py`           | 510  |
+| `backend/app/services/reports/daily_report.py`  | 725  |
+| `backend/app/services/plan_service.py`          | 733  |
+| `backend/app/services/tredict_sync_service.py`  | 688  |
+| `backend/app/services/reports/period_report.py` | 436  |
+
+**影响**：单文件认知负担高；并行修改冲突概率上升；新人上手曲线变长。
+
+**改进方向**：
+
+- `verify.py`：按「通道/校验类型」拆为子模块（`verify/channels/` + 门面）。
+- `daily_report.py`：将「数据装配」「章节渲染」「风险段落」拆成私有函数模块或子包。
+- `plan_service.py`：分离「周计划构建」「今日计划」「上传」三路径。
+
+**优先级**：P1。
+
+---
+
+### A.2 耦合与依赖
+
+#### A.2.1 健康检查中残留开发机硬编码路径 ✅ 已修复（v3.1.0）
+
+**现象**：`ops` 健康检查对 Garmin / Tredict 的「是否已配置」判断中，硬编码了 Windows 与特定盘符路径。
+
+**证据**：`backend/app/api/ops.py` 中：
+
+```python
+plugin_session = Path(
+    os.path.expanduser(
+        "~/AppData/Local/dsh-plugin-garmin-connect/accounts/personal-cn.session.json"
+    )
+)
+...
+tredict_cfg = Path(r"F:/WorkBuddy AI/Garmin_Tredict/_tools/tredict.config.json")
+```
+
+**影响**：
+
+- 在 Linux/NAS 容器中这些路径永远不存在，判断逻辑依赖「或」分支才正确。
+- 泄露开发机目录结构，不利于开源或协作。
+- 新环境误判「已配置」的风险（若未来有人挂载类似路径）。
+
+**改进方向**：删除硬编码路径；统一以 `Settings` 中的 `garmin_tokenstore`、`tredict_token`（及 `tredict_ready`）为唯一真相源。插件引导若仍需要，改为可选配置项。
+
+**实际落地**：插件 session 分支与 `F:` 盘配置探测**整体删除**（不保留永远为 None 的配置项）。
+Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `settings.tredict_ready`。
+`HealthResponse` 形状不变。锁定测试：`tests/test_ops.py::test_health_source_has_no_hardcoded_dev_paths`
+（源码级断言，防止路径再次混入）+ 3 条判定分支测试。
+
+**优先级**：P0（正确性与可移植性）。
+
+---
+
+#### A.2.2 调度器与服务之间的延迟导入
+
+**现象**：`orchestrator/scheduler.py` 大量使用函数内 `from app.services... import ...`，以避免循环依赖。
+
+**证据**：`_sync_daily`、`_run_downstream` 等内部延迟导入。
+
+**影响**：运行时才暴露导入错误；类型检查与静态分析较弱；新人不易看出真实依赖图。
+
+**改进方向**：引入薄「应用层门面」或把调度任务注册改为「可注入的 callable 表」，使依赖在模块顶层可见；或接受现状但在 ARCHITECTURE 中维护依赖图。
+
+**优先级**：P2。
+
+---
+
+### A.3 可测试性
+
+#### A.3.1 测试覆盖面优秀（正向）
+
+**现象**：`backend/tests/` 下大量针对 domain、load、risk、pipeline、API 的用例；`conftest.py` 将数据目录重定向到临时目录，避免污染仓库。
+
+**证据**：本环境执行结果约 **991 passed**（排除因缺失 `fitdecode` 的用例后）。
+
+**影响**：重构安全感高。
+
+**改进方向**：将 `fitdecode` / `garmin-fit-sdk` 纳入 CI 必装依赖；为缺失可选依赖的测试使用 `pytest.importorskip`。
+
+**优先级**：P1。
+
+---
+
+#### A.3.2 FIT 解析双依赖导致测试脆弱 ✅ 已确认非缺陷
+
+**现象**：`app/parsers/fit.py` 顶层 `import fitdecode`；`test_fit_parser.py` 与 `test_verify_engine.py` 的指纹测试依赖解析器代码存在。
+
+**证据**：
+
+- `backend/app/parsers/fit.py:36`：`import fitdecode`
+- 测试失败信息：`ModuleNotFoundError: No module named 'fitdecode'` 导致 3 个 verify 相关失败。
+
+**影响**：干净环境或网络受限时 CI 不稳定。
+
+**复核结论（2026-11-07）**：在本机完整依赖环境下 `test_fit_parser.py + test_verify_engine.py`
+合跑 **65 passed**。`fitdecode` 与 `garmin-fit-sdk` 均在 `pyproject.toml` 硬依赖中
+（`dependencies` 而非 `optional-dependencies`），因此「干净环境失败」实为**评审环境依赖未装全**，
+不是仓库缺陷。不需要做降级策略或 `importorskip`——那会把真正的依赖缺失变成静默跳过。
+
+**改进方向**：CI 已按 A.9.1 安装全量依赖（`pip install -e "./backend[dev]"`），FIT 用例在 CI 中真实执行。
+
+**优先级**：P1 → 已关闭。
+
+---
+
+### A.4 错误处理
+
+#### A.4.1 统一 AppError + 全局处理器（正向）
+
+**证据**：`backend/app/errors.py` + `main.py` 的 `@app.exception_handler(AppError)`，响应体 `{error: {code, message, detail}}`。
+
+**影响**：前端可稳定解析错误码。
+
+**改进方向**：确保所有外部 adapter 异常均映射为 `AppError`，避免裸 `Exception` 泄漏 500 且无码。
+
+**优先级**：P2。
+
+---
+
+#### A.4.2 日流水线「吞异常记步骤」模式 ✅ 已修复（v3.1.0）
+
+**现象**：`scheduler._run_downstream` 对 analysis / plan / dingtalk 使用宽泛 `except Exception`，只写入 `out["steps"]`。
+
+**证据**：`backend/app/orchestrator/scheduler.py` 中多处 `except Exception as e`。
+
+**影响**：优点是单步失败不阻断后续日期；缺点是根因可能只留在日志/步骤字符串，告警不够结构化。
+
+**改进方向**：保留「不阻断」语义，但统一写入 `Fault` / 任务状态机，并产生可查询的 fault 记录（系统已有 fault 相关表与 API，应打通）。
+
+**实际落地**：新增 `_record_step_fault()`，四个步骤（analysis / plan / dingtalk / upload）失败时
+调用既有 `recovery_service.report_fault()` 登记，`kind=generalTech`（一般技术故障，不需人工确认）、
+`impact_scope=f"{step}@{date}"`、`fix_measures=f"{异常类型}: {消息}"`。
+登记本身失败只记 warning，**绝不阻断日任务**。
+`out["steps"]` 字符串格式保持不变（向后兼容既有消费方）。
+锁定测试：`tests/test_scheduler_downstream_faults.py`（8 条，含「Fault 表写失败不影响流水线」与「全成功时零记录」）。
+
+**优先级**：P1 → 已关闭。
+
+---
+
+### A.5 配置管理
+
+#### A.5.1 pydantic-settings + SecretStr（正向）
+
+**证据**：`backend/app/config.py`：`SecretStr`、`ensure_dirs`、`llm_ready` / `tredict_ready` 统一判定。
+
+**改进方向**：将仍散落在代码中的「候选阈值」逐步迁入 Settings 或规则注册表，避免魔法数。
+
+**优先级**：P2。
+
+---
+
+#### A.5.2 风险阈值「候选值待验证」
+
+**现象**：配置与规则中多处注释标明阈值为候选、待校准。
+
+**证据**：`.env.example` 与 `config.py` 注释（如 `validate_min_replay_match`、风险规则版本说明）；`rule_registry.py` 内阈值字典。
+
+**影响**：生产行为依赖个人经验值；复现实验时版本字段能追溯，但科学校准流程未产品化。
+
+**改进方向**：建立「规则版本 + 校准数据集 + 回放」流水线（系统已有 strategy_replay / verify 能力，可复用）。
+
+**优先级**：P1。
+
+---
+
+### A.6 安全性
+
+#### A.6.1 单用户无认证（设计选择）✅ 已补声明（v3.1.0）
+
+**现象**：无登录、CORS `allow_origins=["*"]`（`main.py`）。
+
+**证据**：`AGENTS.md` 明确「单用户、无登录」；`main.py` CORS 配置。
+
+**影响**：在内网/NAS 场景可接受；若暴露公网则风险极高（健康数据 + 可触发同步/写操作）。
+
+**实际落地**：README §5.5 增加醒目的「禁止将 18080 直接暴露到公网」警示块，说明后果
+（健康数据可读 + 同步/上传/故障恢复等写操作可被调用）与内网/VPN + 反代鉴权要求。
+未引入应用层认证——那是与既有设计选择冲突的方案。
+
+**优先级**：P0（若公网暴露）；否则 P2。当前已通过文档声明处置。
+
+---
+
+#### A.6.2 密钥与数据
+
+**正向**：密钥用 SecretStr；secrets 目录只读挂载；原始数据不入库。
+
+**残留风险**：开发机路径硬编码（见 A.2.1）；`.env` 误提交需靠 `.gitignore`（已有）。
+
+**优先级**：与 A.2.1 绑定。
+
+---
+
+### A.7 性能
+
+#### A.7.1 单 worker + 串行任务（与 NAS 约束匹配）
+
+**证据**：`docker-compose.single.yml` 注释说明群晖 cgroup 限制，仅设 `mem_limit: 1024m`；uvicorn 单 worker + 调度串行。
+
+**影响**：对个人日频任务足够；高峰批处理（大量历史重算）可能变慢。
+
+**改进方向**：重算路径提供 CLI（已有 `recompute_cli`）并支持按日期分片；避免在请求路径做重计算。
+
+**优先级**：P2。
+
+---
+
+### A.8 可观测性
+
+#### A.8.1 审计 JSONL + 任务状态 + 健康检查（正向）
+
+**证据**：`storage/audit_store.py`、`orchestrator/task_state.py`、`api/ops.py` 的 health / tasks / faults。
+
+**改进方向**：
+
+- 统一结构化日志字段（request_id / job_id / date）。
+- 关键失败自动写入 Fault 表并在前端运维台高亮（部分已有，需打通吞异常路径）。
+
+**优先级**：P1。
+
+---
+
+### A.9 构建与发布
+
+#### A.9.1 单容器 + 强制 HS_TAG（正向）✅ 已补 CI 门禁（v3.1.0）
+
+**证据**：`docker-compose.single.yml` 使用 `${HS_TAG:?...}`；`.github/workflows/build-and-push.yml`；`deploy/nas_deploy_single.sh`。
+
+**影响**：可追溯、可回滚。
+
+**改进方向**：在 CI 中跑完整 pytest（含 FIT 依赖）与前端 `npm run build`，作为镜像构建前置。
+
+**实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q` +
+`npm ci && npm run build`），`build-and-push` 声明 `needs: quality`。
+锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（5 条，校验 job 存在、依赖关系与三条命令）。
+
+**优先级**：P1 → 已关闭。
+
+---
+
+### A.10 文档与工程规范
+
+#### A.10.1 AGENTS.md 与分层约定优秀（正向）
+
+**证据**：根目录 `AGENTS.md` 对 AI/协作者约束清晰。
+
+**改进方向**：把「禁止 domain 做 IO」「禁止 LLM 覆盖风险判定」做成可自动检查的规则。
+
+**优先级**：P2。
+
+---
+
+## B. 分阶段重构路线图 + 风险与收益评估
+
+```mermaid
+gantt
+    title 重构路线图（建议）
+    dateFormat  YYYY-MM-DD
+    section 阶段0 止血
+    移除硬编码路径           :p0a, 2026-11-10, 3d
+    CI 装全 FIT 依赖         :p0b, 2026-11-10, 3d
+    公网暴露声明与 Nginx 建议 :p0c, 2026-11-10, 2d
+    section 阶段1 稳测试与可观测
+    吞异常打通 Fault         :p1a, after p0a, 7d
+    规则校准流水线雏形       :p1b, after p0b, 10d
+    大文件拆分（verify/日报）:p1c, after p0a, 14d
+    section 阶段2 结构演进
+    调度依赖显式化           :p2a, after p1c, 7d
+    计划服务三路径拆分       :p2b, after p1c, 10d
+    配置与阈值外置           :p2c, after p1b, 7d
+    section 阶段3 可选增强
+    可选鉴权/反代加固        :p3a, after p2a, 5d
+    重算分片与性能基线       :p3b, after p2b, 7d
+```
+
+### 阶段 0：止血（1 周内）
+
+| 项            | 目标               | 交付物                    | 验证                 | 回滚    |
+| ------------ | ---------------- | ---------------------- | ------------------ | ----- |
+| 移除 ops 硬编码路径 | 健康检查只依赖 Settings | PR 改 `api/ops.py` + 单测 | pytest + 手动 health | 还原该文件 |
+| CI 装全依赖      | FIT 相关测试稳定       | workflow 与 README 同步   | CI 绿               | 无     |
+| 文档声明公网风险     | 避免误暴露            | README / 部署说明          | 评审                 | 无     |
+
+**收益**：消除环境相关误判；CI 可信。  
+**风险**：极低，改动面小。
+
+### 阶段 1：稳测试与可观测（2–3 周）
+
+| 项        | 目标                       | 交付物                     | 验证            |
+| -------- | ------------------------ | ----------------------- | ------------- |
+| 流水线失败结构化 | 每步失败可在 Fault/任务中查询       | scheduler + fault 写入    | 故障注入测试已有，扩展断言 |
+| 规则校准雏形   | 版本化阈值 + 回放对比             | 文档 + 脚本复用 verify/replay | 回放匹配率阈值       |
+| 大文件拆分    | verify / daily_report 可读 | 子模块 + 行为不变测试            | 全量 pytest     |
+
+**收益**：排障时间下降；重构后回归成本低。  
+**风险**：拆分时需严格保持公共 API 与序列化形状；用现有 900+ 测试兜底。
+
+### 阶段 2：结构演进（3–4 周）
+
+- 调度依赖显式化、计划服务拆分、阈值进入配置/注册表单一来源。
+
+**收益**：长期可维护性。  
+**风险**：中等；需分 PR，每 PR 行为不变。
+
+### 阶段 3：可选增强
+
+- 仅在「可能公网访问」或「历史重算变慢」触发时做。
+
+**可选方案标注**：见 C 节。
+
+---
+
+## C. 模块/文件级重构方案
+
+### C.1 目标架构（主方案：在现有技术栈内渐进）
+
+```mermaid
+flowchart TB
+    subgraph Presentation
+        FE[React SPA]
+        NGX[Nginx]
+    end
+    subgraph API
+        R[api/* routers]
+    end
+    subgraph Application
+        S[services/*]
+        O[orchestrator]
+    end
+    subgraph Domain
+        DLoad[domain/load]
+        DRisk[domain/risk + priority + rule_registry]
+        DPlan[domain/plan_rules + prescription]
+        DOther[baseline / verify / strategy...]
+    end
+    subgraph Adapters
+        G[Garmin]
+        T[Tredict]
+        L[LLM]
+        W[Weather]
+        DT[DingTalk]
+    end
+    subgraph Persistence
+        ST[storage/*]
+        DB[(SQLite)]
+        RAW[raw files]
+        AUD[audit JSONL]
+    end
+    FE --> NGX --> R
+    R --> S
+    O --> S
+    S --> DLoad & DRisk & DPlan & DOther
+    S --> G & T & L & W & DT
+    S --> ST
+    ST --> DB & RAW & AUD
+```
+
+**依赖方向**：API/Orchestrator → Services → Domain / Adapters / Storage；Domain 不依赖外层。
+
+### C.2 关键依赖图（现状核心）
+
+```mermaid
+flowchart LR
+    Scheduler --> DailyPipeline
+    DailyPipeline --> GarminAdapter
+    DailyPipeline --> StandardStore
+    DailyPipeline --> ReportService
+    ReportService --> LoadDomain
+    ReportService --> RiskDomain
+    Scheduler --> CoachService
+    CoachService --> LLMAdapter
+    Scheduler --> PlanService
+    PlanService --> RiskDomain
+    PlanService --> TredictAdapter
+    Scheduler --> DingTalkService
+```
+
+### C.3 核心流程时序（日任务）
+
+```mermaid
+sequenceDiagram
+    participant Sch as Scheduler
+    participant Pipe as daily_pipeline
+    participant G as GarminAdapter
+    participant Std as standard_store
+    participant Rpt as report_service
+    participant Risk as domain.risk
+    participant Coach as coach_service
+    participant Plan as plan_service
+    participant DT as dingtalk_service
+
+    Sch->>Pipe: sync_daily(date)
+    Pipe->>G: sync_day / read_raw
+    Pipe->>Std: upsert_standard
+    Pipe->>Rpt: generate / load / ACWR
+    Rpt->>Risk: evaluate
+    Sch->>Coach: analyze_daily
+    Sch->>Plan: build_today_plan
+    alt 风险允许
+        Sch->>Plan: upload_session
+    end
+    Sch->>DT: push_daily_report
+```
+
+### C.4 逐模块方案
+
+#### C.4.1 `backend/app/api/ops.py`
+
+| 项    | 内容                                         |
+| ---- | ------------------------------------------ |
+| 现状   | 健康检查混入 Windows 插件路径与 F: 盘 Tredict 配置路径     |
+| 目标   | 仅使用 Settings 与容器内路径；可选「额外探测路径」配置化          |
+| 接口调整 | `HealthResponse` 形状不变                      |
+| 迁移步骤 | 1) 删除硬编码 2) 单测构造 Settings 覆盖 3) 手动打 health |
+| 验证   | `tests/test_*` 中与 health 相关用例 + 手工 curl    |
+
+
+#### C.4.2 `backend/app/domain/verify.py`
+
+| 项    | 内容                                                                          |
+| ---- | --------------------------------------------------------------------------- |
+| 现状   | 单文件 1000+ 行，多通道校验与指纹                                                        |
+| 目标   | `domain/verify/` 包：`fingerprint.py`、`channels/*.py`、`__init__.py` 导出原公共 API |
+| 接口调整 | 保持 `verify` 公共函数签名不变                                                        |
+| 迁移步骤 | 按通道剪切 → 全量 pytest → 再删旧文件                                                   |
+| 验证   | `test_verify_engine.py` 与 cloud_verify 相关用例                                 |
+
+#### C.4.3 `backend/app/services/reports/daily_report.py`
+
+| 项    | 内容                                                        |
+| ---- | --------------------------------------------------------- |
+| 现状   | 装配 + 多章节生成耦合                                              |
+| 目标   | `reports/daily/`：`assemble.py`、`sections_*.py`、`build.py` |
+| 接口调整 | `generate_daily` 入口不变                                     |
+| 迁移步骤 | 先抽纯函数，再搬文件                                                |
+| 验证   | 日报快照/字段级测试（已有 daily 相关测试）                                 |
+
+#### C.4.4 `backend/app/services/plan_service.py`
+
+| 项    | 内容                                                   |
+| ---- | ---------------------------------------------------- |
+| 现状   | 周计划、今日计划、上传交织                                        |
+| 目标   | `plan/week.py`、`plan/today.py`、`plan/upload.py` + 门面 |
+| 接口调整 | 对 scheduler / API 的入口函数名保持                           |
+| 迁移步骤 | 按调用图拆，每拆一块跑相关 test_plan* / test_recovery\*           |
+| 验证   | 计划与风险拦截相关测试全绿                                        |
+
+#### C.4.5 `backend/app/orchestrator/scheduler.py`
+
+| 项    | 内容                     |
+| ---- | ---------------------- |
+| 现状   | 延迟导入 + 宽泛 except       |
+| 目标   | 顶层导入或任务注册表；失败写入 Fault  |
+| 接口调整 | cron 与对外 CLI 不变        |
+| 迁移步骤 | 先打通 Fault，再整理导入        |
+| 验证   | `test_fault_*`、日任务集成测试 |
+
+#### C.4.6 `backend/app/parsers/fit.py` 与依赖
+
+| 项    | 内容                                    |
+| ---- | ------------------------------------- |
+| 现状   | 双库；缺 fitdecode 则导入失败                  |
+| 目标   | CI/文档保证双库；交叉校验失败时降级并记审计，而非导入即崩（若产品允许） |
+| 接口调整 | 解析入口返回结构不变                            |
+| 迁移步骤 | 依赖与 CI → 再考虑降级策略                      |
+| 验证   | `test_fit_parser.py`                  |
+
+### C.5 可选方案（非主路径）
+
+#### 可选：更换 SQLite → PostgreSQL
+
+- **收益**：并发与工具链更强。
+- **成本**：部署复杂度上升，与「单容器 NAS」定位冲突。
+- **风险**：迁移与备份流程重做。
+- **触发条件**：明确多进程写或需要复杂分析查询时。
+
+#### 可选：引入任务队列（RQ/Celery）
+
+- **收益**：重算与同步解耦。
+- **成本**：多进程/Redis，超出当前 1GB 内存护栏。
+- **触发条件**：日任务经常超时或需并行历史回填。
+
+#### 可选：前端状态机/更强类型 API
+
+- **收益**：减少前后端字段漂移。
+- **成本**：需固化 OpenAPI 生成进 CI（已有 `gen:api` 脚本）。
+- **触发条件**：前端页面与契约频繁不一致时。
+
+---
+
+## 附录：分析覆盖说明
+
+| 类别               | 覆盖情况                                                                     |
+| ---------------- | ------------------------------------------------------------------------ |
+| 后端 `app/**/*.py` | 已阅读入口、配置、模型、主要 domain/services/api/adapters/storage/orchestrator/parsers |
+| 迁移脚本             | 已列出全部 versions，抽样阅读命名与职责                                                 |
+| 测试               | 已阅读 `conftest.py` 与目录；实际执行 pytest（见 README 验证节）                          |
+| 前端               | 已阅读 `App.tsx`、`package.json`、`vite.config.ts`、页面结构                       |
+| 部署               | 已阅读 `docker-compose.single.yml`、`deploy/*`、workflow                      |
+| 未逐行精读            | 部分超长测试夹具、个别 probe 脚本、力量动作 JSON 全量内容（不影响架构结论）                             |
+
+**未修改任何源码/配置**；依赖安装与测试均在项目外临时环境完成。
+
+---
+
+*文档结束。*
