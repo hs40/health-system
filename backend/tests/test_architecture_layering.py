@@ -134,24 +134,20 @@ class TestModuleSizeBudget:
     MAX_LINES = 700
 
     # 已评估并接受现状的文件 → 理由
-    ACCEPTED: dict[str, str] = {
-        # verify.py 的 4 个测试文件直接 import 15 个内部符号与私有常量，
-        # 拆分需同步改动测试与指纹断言（canonical_sha256 依赖代码结构），
-        # 风险远高于收益 → 待单独立项（见 ARCHITECTURE_REVIEW A.1.2）。
-        "domain/verify.py": "指纹与 15 个内部符号被测试锁定，拆分需单独立项",
-    }
+    ACCEPTED: dict[str, str] = {}
 
     def test_no_unaccepted_oversized_service_module(self):
         oversized: list[str] = []
-        for path in (APP / "services").rglob("*.py"):
-            rel = path.relative_to(APP).as_posix()
-            if rel in self.ACCEPTED:
-                continue
-            lines = len(path.read_text(encoding="utf-8").splitlines())
-            if lines > self.MAX_LINES:
-                oversized.append(f"{rel}: {lines} 行 > {self.MAX_LINES}")
+        for base in (APP / "services", APP / "domain"):
+            for path in base.rglob("*.py"):
+                rel = path.relative_to(APP).as_posix()
+                if rel in self.ACCEPTED:
+                    continue
+                lines = len(path.read_text(encoding="utf-8").splitlines())
+                if lines > self.MAX_LINES:
+                    oversized.append(f"{rel}: {lines} 行 > {self.MAX_LINES}")
         assert oversized == [], (
-            "以下 services 模块超出体量预算且未豁免（应拆分或显式登记理由）：\n  "
+            "以下 services/domain 模块超出体量预算且未豁免（应拆分或显式登记理由）：\n  "
             + "\n  ".join(oversized)
         )
 
