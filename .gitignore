@@ -71,3 +71,7 @@ docs/
 # 测试/构建产物
 backend/build/
 backend/res.xml
+
+# OpenAPI 生成物（`npm run gen:api` 的确定性产物，按需重建，不入库）
+frontend/src/api/schema.d.ts
+frontend/.openapi.json
