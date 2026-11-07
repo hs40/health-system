@@ -269,3 +269,117 @@ class TestPublicExposureWarning:
         assert "18080" in content and "公网" in content, (
             "AGENTS.md「不要做」未把公网暴露列为禁止项"
         )
+
+
+# ---------- nginx 配置上下文正确性（v3.4.0 事故回归） ----------
+
+
+def _strip_nginx_comments(text: str) -> str:
+    """去掉 ``#`` 注释与空行，避免注释里的示例文字触发断言。"""
+    out = []
+    for line in text.splitlines():
+        code = line.split("#", 1)[0].strip()
+        if code:
+            out.append(code)
+    return "\n".join(out)
+
+
+class TestNginxConfigContext:
+    """``map`` / ``log_format`` 只能出现在 http 上下文。
+
+    v3.4.0 把 ``log_format`` 写进了 ``server {}`` 内部，nginx 直接
+    ``[emerg] "log_format" directive is not allowed here``，容器 nginx 进程
+    起不来、整个站不可用。本地构建与 CI 都没发现——因为 CI 只**构建**镜像，
+    从不**加载**配置。这条测试把「上下文正确」变成构建前就能发现的断言。
+    """
+
+    HTTP_ONLY = ("map", "log_format", "upstream", "geo", "split_clients")
+
+    def _assert_http_context(self, filename: str) -> None:
+        """断言 http 级指令**不在** server 块内部（在块外才是对的）。"""
+        path = REPO_ROOT / "deploy" / filename
+        inside = self._inside_server(path.read_text(encoding="utf-8"))
+        for directive in self.HTTP_ONLY:
+            for line in inside.splitlines():
+                stripped = line.strip()
+                assert not stripped.startswith(directive + " "), (
+                    f"{filename} 把 http 级指令 {directive!r} 写在了 server 块里"
+                    f"（v3.4.0 事故同款）：{stripped!r}"
+                )
+
+    @staticmethod
+    def _inside_server(text: str) -> str:
+        """返回 ``server {}`` 块**内部**的内容。
+
+        取出 ``server {}`` 块内的文本，用于断言「http 级指令没有跑进块里」。
+        """
+        code = _strip_nginx_comments(text)
+        parts: list[str] = []
+        i = 0
+        n = len(code)
+        while i < n:
+            if code.startswith("server", i):
+                j = i + len("server")
+                while j < n and code[j] in " \t\r\n":
+                    j += 1
+                if j < n and code[j] == "{":
+                    inner = 0
+                    k = j
+                    while k < n:
+                        if code[k] == "{":
+                            inner += 1
+                        elif code[k] == "}":
+                            inner -= 1
+                            if inner == 0:
+                                break
+                        k += 1
+                    parts.append(code[j + 1 : k])
+                    i = k + 1
+                    continue
+            i += 1
+        return "\n".join(parts)
+
+    def test_detector_catches_the_actual_v340_bug(self):
+        """反向自检：用 v3.4.0 的原样错误配置喂给检测器，必须报错。
+
+        否则「块里没有 log_format」可能只是因为解析器什么都没识别出来——
+        那是假绿，比没有测试更危险。
+        """
+        broken = """
+        map $http_x_request_id $hs_request_id {
+            default $http_x_request_id;
+            ""      $request_id;
+        }
+        server {
+            listen 80;
+            log_format hs '$remote_addr $status';
+            access_log /dev/stdout hs;
+        }
+        """
+        inside = self._inside_server(broken)
+        assert "log_format hs" in inside, (
+            "检测器没能把 server 块内的 log_format 识别出来，测试会假绿"
+        )
+
+    def test_server_file_has_no_http_only_directives(self):
+        self._assert_http_context("nginx.single.conf")
+
+    def test_http_snippet_has_no_http_only_directives_inside_server(self):
+        self._assert_http_context("nginx.http.single.conf")
+
+    def test_http_snippet_declares_request_id_map(self):
+        """``$hs_request_id`` 的定义必须存在，否则所有引用它的指令都是未知变量。"""
+        snippet = _read(REPO_ROOT / "deploy" / "nginx.http.single.conf")
+        assert "$hs_request_id" in snippet
+        assert "map $http_x_request_id $hs_request_id" in snippet
+
+    def test_server_file_includes_http_snippet(self):
+        """``map`` / ``log_format`` 拆出去后，必须在 server 文件里 include 回来。"""
+        server = _read(REPO_ROOT / "deploy" / "nginx.single.conf")
+        assert "include /etc/nginx/hs-http.conf;" in server
+
+    def test_dockerfile_installs_snippet_and_validates_config(self):
+        """片段必须被 COPY 到 include 指向的路径，且构建期做一次 ``nginx -t``。"""
+        dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
+        assert "deploy/nginx.http.single.conf /etc/nginx/hs-http.conf" in dockerfile
+        assert "nginx -t" in dockerfile

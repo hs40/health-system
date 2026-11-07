@@ -54,8 +54,25 @@ RUN pip install -e .
 COPY --from=fe /fe/dist /usr/share/nginx/html
 
 # 进程编排与反代配置
+# nginx.single.conf 被 nginx.conf 的 http 块 include；其中的 map / log_format
+# 必须留在 http 上下文，故单独一个片段拷到 conf.d 之外（见该文件头部说明）。
+COPY deploy/nginx.http.single.conf /etc/nginx/hs-http.conf
 COPY deploy/nginx.single.conf /etc/nginx/conf.d/hs.conf
 COPY deploy/supervisord.single.conf /etc/supervisor/conf.d/hs.conf
+
+# 构建期配置语法检查：nginx 的 fatal 只有在真正加载配置时才暴露。
+# v3.4.0 把 log_format 写进 server 块，本地与 CI 全绿、容器却起不来——
+# 因为 CI 只构建镜像、从不加载配置。这一步让同样的错误在构建时就失败。
+#
+# 判定口径：只有 ``nginx -t`` 输出 ``[emerg]`` / ``[error]`` 才算失败。
+# 不直接看退出码——Debian 的 nginx.conf 带 ``user www-data;``，在任何
+# 「非 root 或缺该用户」的环境里 -t 会因这个无关原因返回非零，那会把
+# 一个无害的环境差异变成构建失败。``[warn]`` 同样放过。
+RUN nginx -t -c /etc/nginx/nginx.conf > /tmp/nginx-t.log 2>&1 || true; \
+    if grep -qE '\[(emerg|error)\]' /tmp/nginx-t.log; then \
+        echo "nginx 配置校验失败：" ; cat /tmp/nginx-t.log ; exit 1 ; \
+    fi ; \
+    echo "nginx 配置校验通过" ; rm -f /tmp/nginx-t.log
 
 EXPOSE 80
 
