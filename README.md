@@ -305,11 +305,15 @@ python -m pytest tests/ -q
 
 **实际验证结果（2026-11-07，本地开发机，FIT 双库齐全）**：
 
-- `python -m pytest tests/ -q` → **1025 passed**（无跳过、无失败）
+- `python -m pytest tests/ -q` → **1032 passed**（无跳过、无失败）
 - `ruff check app/ scripts/ tests/` → 全绿
 - `npm run build` → 通过（类型检查 + 产物构建）
 
-CI 的 `quality` job 覆盖同样三项；任一失败则不产出镜像。
+CI 的 `quality` job 覆盖 `ruff` + `pytest`（后端）；前端类型检查由 `deploy/Dockerfile.single`
+stage 1 的 `npm run build` 覆盖。任一失败则不产出镜像。
+
+`tests/test_architecture_layering.py` 把 `AGENTS.md` 的分层约定变成了可执行断言：
+调度器不得函数内延迟导入、services 不得反向依赖 orchestrator、services 模块体量预算。
 
 ### 7.2 静态检查
 
@@ -415,12 +419,21 @@ health-system/
 2. ~~CI 只构建不测试~~ → 新增 `quality` job 前置门禁（A.9.1）。
 3. ~~日流水线吞异常只留步骤字符串~~ → 失败结构化写入 Fault 表，运维台可查（A.4.2）。
 
+已解决（v3.2.0）：
+
+4. ~~调度器多处函数内延迟导入~~ → 15 条全部提到模块顶层（实测无循环依赖），并由 AST 测试锁定（A.2.2）。
+5. ~~services 反向依赖 orchestrator（`task_state`）~~ → 下移至 `app/storage/task_state.py`，层级倒置消除（A.1.1 / A.2.2）。
+6. ~~`daily_report.py` 725 行~~ → 抽出 `reports/daily_load.py`，降至 632 行（A.1.2）。
+7. ~~`plan_service.py` 733 行~~ → 抽出 `plan_upload.py` / `plan12w_service.py` / `plan_context.py`，降至约 430 行（A.1.2）。
+8. ~~分层与体量约定只写在文档里、无人执行~~ → `tests/test_architecture_layering.py` 以 AST 断言固化（A.1.1 / A.2.2）。
+
 尚存：
 
-1. 领域与服务层部分文件体量较大（`verify.py` 1016 行、`daily_report.py` 725 行、`plan_service.py` 733 行），可继续拆分（A.1.2，P1）。
+1. `domain/verify.py`（1016 行）仍需拆分（A.1.2，P1）。已登记在体量预算白名单，因 4 个测试文件
+   直接引用其内部符号与私有常量，且 `canonical_sha256` 指纹依赖代码结构，需单独排期。
 2. 配置中存在「候选阈值待验证」注释，需产品化时固化或外置（A.5.2，P1）。
-3. 调度器依赖较隐晦（多处函数内延迟导入），可显式化为任务注册表（A.2.2，P2）。
-4. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
+3. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
+4. 结构化日志规范尚未落地（A.8.1，P2）。
 
 ### 9.4 给 AI 编码代理
 
