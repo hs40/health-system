@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.4.0）
+## 执行进度（截至 2026-11-07，v3.4.1）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -27,6 +27,7 @@
 | A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
 | A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
 | A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 需先 `gen:api`） | ⬜ 待立项 |
+| 部署回归 | nginx `log_format` 写在 `server` 内 → 容器起不来；已加构建期 `nginx -t` | ✅ v3.4.1 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -118,6 +119,27 @@
     要对照代码默认值需显式传 `baseline=rr.RULES`。
   - CLI 新增 `--file`，与运行时同一套校验；`rule_thresholds.example.json` 有测试
     锁住「样例必须能通过校验」，避免照抄 example 在上线时炸。
+
+**v3.4.1 事故与修复（v3.4.0 致命回归）**：
+
+v3.4.0 上线即不可用：容器内 `nginx FATAL Exited too quickly`，
+`[emerg] "log_format" directive is not allowed here in /etc/nginx/conf.d/hs.conf:22`。
+
+- **根因**：为 access log 加 `rid=` 字段时，把 `log_format` 写进了 `server {}` 内。
+  `log_format` 只允许出现在 `http` 上下文；`conf.d/*.conf` 被 include 后，
+  一旦进入 `server {` 就是 server 上下文。
+- **为什么全绿却起不来**：CI 的 `build-and-push` 只**构建**镜像、从不**加载**配置；
+  `npm run build`、`ruff`、`pytest` 都碰不到 nginx。**配置语法从未被执行过**。
+- **修法**：`map` / `log_format` 移到 `deploy/nginx.http.single.conf`，
+  由 server 文件首行 `include /etc/nginx/hs-http.conf;` 引入；
+  Dockerfile 增加 COPY 并在构建期跑 `nginx -t`。
+  `nginx -t` **只看输出里的 `[emerg]` / `[error]`，不看退出码**——Debian 的
+  `nginx.conf` 带 `user www-data;`，在非 root 或缺该用户的环境里会因无关原因
+  返回非零，看退出码会把无害的环境差异变成构建失败。
+- **回归测试**（`test_deploy_config.py` 新增 6 条）：断言 http 级指令不在 `server {}` 内、
+  `$hs_request_id` 的 map 定义存在、server 文件 include 片段、Dockerfile COPY 到该路径并跑校验；
+  并有**反向自检**——用 v3.4.0 的原样错误配置喂给检测器，必须报出来。
+  没有反向自检时，「块里没有 log_format」可能只是解析器什么都没识别到（假绿）。
 
 > 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。
