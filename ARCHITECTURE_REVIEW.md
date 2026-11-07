@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.2.0）
+## 执行进度（截至 2026-11-07，v3.3.0）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -15,12 +15,14 @@
 | A.6.1 | 公网暴露风险声明（README §5.5） | ✅ v3.1.0 |
 | A.3.2 | FIT 双依赖测试稳定性 | ✅ 已确认非缺陷；CI 必装全量依赖 |
 | A.2.2 / C.4.5 | 调度依赖显式化 + 消除 services→orchestrator 层级倒置 | ✅ v3.2.0 |
-| A.1.2 部分 | `daily_report.py` 拆分（725→632，负荷/ACWR 抽出） | ✅ v3.2.0 |
-| A.1.2 部分 | `plan_service.py` 拆分（733→407，上传/12周/上下文抽出） | ✅ v3.2.0 |
+| A.1.2 部分 | `daily_report.py` 拆分（725→625，负荷/ACWR 抽出） | ✅ v3.2.0 |
+| A.1.2 部分 | `plan_service.py` 拆分（733→约 430，上传/12周/上下文抽出） | ✅ v3.2.0 |
 | A.1.1 / A.10.1 | 分层约束与体量预算自动化（`test_architecture_layering.py`） | ✅ v3.2.0 |
-| A.1.2 剩余 | `domain/verify.py` 拆分（1016 行） | ⬜ 需单独立项 |
-| A.5.2 | 规则阈值校准流水线 | ⬜ 待立项 |
-| A.8.1 | 统一结构化日志字段 | ⬜ 待立项 |
+| A.1.2 / C.4.2 | `domain/verify.py` 拆分为 `verify/` 包（1016 行 → 9 模块，最大 298 行） | ✅ v3.3.0 |
+| A.8.1 | 结构化日志：单点配置 + `task_id`/`date` 上下文注入 + 命名规范 | ✅ v3.3.0 |
+| A.5.2 | 规则阈值校准：双规则集对照回放（`domain/calibration.py`） | ✅ v3.3.0 首版 |
+| A.5.2 剩余 | 校准结果接入「候选阈值外置为数据文件」 | ⬜ 待立项 |
+| A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ⬜ 待立项 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -29,6 +31,30 @@
 | ACWR 窗口截断 | `DailyPage` 只取 21 天，而后端按 D−56 预热 → 历史日报 ACWR 不一致 | ✅ 改为 56 天同口径 |
 | 类型漂移 | `DailyReport` 缺 `strategy` / `algo_versions` 两个后端已有字段 | ✅ 已补齐 |
 | 缓存策略缺失 | 报告类 query 无 `staleTime`，切页必全量重请求 | ✅ 统一 60s |
+
+**v3.3.0 落地细节**：
+
+- **A.1.2 verify 拆分**：`verify/` 包按既有分节切为 `states` / `core` / `fingerprint` /
+  `result` / `channels` / `online` / `fields` / `raw` / `summary` 九个模块。
+  `__init__.py` 门面原样 re-export 旧单文件全部 **46 个公开符号**，
+  5 个测试文件 + 2 个脚本零改动。`__all__` 是必需的（否则 ruff F401 会删 re-export）。
+  `test_verify_package_facade.py` 以清单式断言锁定这 46 个符号。
+  体量预算白名单已清空，`domain/` 一并纳入预算检查。
+- **A.8.1 结构化日志**：新建 `app/logging_conf.py`（唯一 `basicConfig` 位置、`Settings.log_level`
+  真正生效、`log_context` 上下文管理器 + `ContextFilter`）。日志格式 `[task_id@date]`，
+  五个调度任务（daily / sleep_retry / weekly / monthly / tredict_sync）在入口包一层
+  `log_context`。logger 命名统一为 `hs.<子系统>.<模块>`，两层 AST 断言防止回退。
+  **踩坑记录**：`try: with log_context(...): ... except:` 时 `__exit__` 先跑、contextvar
+  已被 reset，在 `except` 里打的日志会丢 `task_id`——日志必须留在上下文块内。
+  **连带修掉的存量 bug**：`alembic` 的 `env.py` 调 `fileConfig()` 用了默认
+  `disable_existing_loggers=True`，会把进程内既有 logger 全置 `disabled`；迁移与应用
+  同进程跑时（测试、启动引导）此后 `hs.*` 日志静默消失。已显式传 `False` 并加契约测试。
+- **A.5.2 校准首版**：`strategy_replay` 是自一致性检验，回答不了「换阈值会怎样」；
+  且阈值是 import 时烧死在 `rule_registry` 模块常量里的，`RULES` 是全局单例。
+  为此给 `judge_priority` 加了可选 `specs` 参数（默认 `None` = 当前规则，行为不变），
+  `domain/calibration.py` 用「当前规则集 vs 候选规则集」跑同一批历史数据，
+  输出逐日差异与优先级迁移矩阵。CLI：`python -m app.domain.calibration_cli
+  --set P1-LOAD-HRV.acwr_high=1.45`。**只读**，不写库、不改全局规则、不产生策略版本。
 
 > 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。

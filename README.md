@@ -305,7 +305,7 @@ python -m pytest tests/ -q
 
 **实际验证结果（2026-11-07，本地开发机，FIT 双库齐全）**：
 
-- `python -m pytest tests/ -q` → **1032 passed**（无跳过、无失败）
+- `python -m pytest tests/ -q` → **1104 passed**（无跳过、无失败）
 - `ruff check app/ scripts/ tests/` → 全绿
 - `npm run build` → 通过（类型检查 + 产物构建）
 
@@ -313,7 +313,8 @@ CI 的 `quality` job 覆盖 `ruff` + `pytest`（后端）；前端类型检查�
 stage 1 的 `npm run build` 覆盖。任一失败则不产出镜像。
 
 `tests/test_architecture_layering.py` 把 `AGENTS.md` 的分层约定变成了可执行断言：
-调度器不得函数内延迟导入、services 不得反向依赖 orchestrator、services 模块体量预算。
+调度器不得函数内延迟导入、services 不得反向依赖 orchestrator、
+`services/` 与 `domain/` 模块体量预算、日志配置单点化与 `hs.*` 命名规范。
 
 ### 7.2 静态检查
 
@@ -427,12 +428,23 @@ health-system/
 7. ~~`plan_service.py` 733 行~~ → 抽出 `plan_upload.py` / `plan12w_service.py` / `plan_context.py`，降至约 430 行（A.1.2）。
 8. ~~分层与体量约定只写在文档里、无人执行~~ → `tests/test_architecture_layering.py` 以 AST 断言固化（A.1.1 / A.2.2）。
 
+已解决（v3.3.0）：
+
+9. ~~`domain/verify.py` 1016 行单文件~~ → 拆为 `verify/` 包 9 模块（最大 298 行），
+   `__init__.py` 门面 re-export 46 个公开符号，调用方零改动（A.1.2）。
+10. ~~日志配置散落两处、`Settings.log_level` 无人读、日志 0 条带任务标识~~ →
+    `app/logging_conf.py` 单点配置 + `log_context` 上下文注入 + `hs.*` 命名规范（A.8.1）。
+11. ~~阈值烧死在模块常量里，无法「换一套阈值重跑」~~ → `judge_priority(specs=...)` +
+    `domain/calibration.py` 双规则集对照回放，只读 CLI（A.5.2 首版）。
+
 尚存：
 
-1. `domain/verify.py`（1016 行）仍需拆分（A.1.2，P1）。已登记在体量预算白名单，因 4 个测试文件
-   直接引用其内部符号与私有常量，且 `canonical_sha256` 指纹依赖代码结构，需单独排期。
-2. 配置中存在「候选阈值待验证」注释，需产品化时固化或外置（A.5.2，P1）。
-3. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
+1. 校准结果尚未外置为数据文件，候选阈值仍需人工写进 CLI 参数（A.5.2 剩余，P1）。
+2. 日志暂未贯穿采集端：Nginx access log 与前端请求缺 `request_id` 关联（A.8.1 剩余，P2）。
+3. 前端 `DailyPage.tsx`（729 行）待拆分；`src.bak-20261022` 与 `vite.config.ts.timestamp-*`
+   残留待清理（A.1.2 前端部分，P1）。
+4. 配置中存在「候选阈值待验证」注释，需产品化时固化（A.5.2，P1）。
+5. 前端与后端错误契约、OpenAPI 生成可更自动化（A.9，P2）。
 4. 结构化日志规范尚未落地（A.8.1，P2）。
 
 ### 9.4 给 AI 编码代理
