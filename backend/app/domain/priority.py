@@ -127,11 +127,19 @@ class PriorityResult:
     acwr_source_date: date | None = None
 
 
-def judge_priority(inp: DataStateInput, state: DataState) -> PriorityResult:
+def judge_priority(
+    inp: DataStateInput,
+    state: DataState,
+    *,
+    specs: tuple[rr.RuleSpec, ...] | None = None,
+) -> PriorityResult:
     """按注册表判定：收集命中规则 → 取最高优先级组 → 由该组规则导出动作。
 
     本函数**不知道任何具体规则**：条件、输出标志、人话原因、规则参数全部来自
     ``rule_registry.RULES``。新增或调整规则只需改注册表，判定器不变。
+
+    ``specs`` 供阈值校准（A.5.2）用：传入一套候选规则集即可「换一套阈值重跑」。
+    默认 ``None`` 等价于 ``rr.ordered_specs()``，既有调用方行为不变。
 
     语义（与 2026-10-25 之前逐条硬编码的实现完全一致，由特征测试锁定）：
     - 取「有规则命中的最高优先级」那一组，只记录该组的命中规则；
@@ -147,7 +155,7 @@ def judge_priority(inp: DataStateInput, state: DataState) -> PriorityResult:
 
     fired = [
         spec
-        for spec in rr.ordered_specs()
+        for spec in (specs if specs is not None else rr.ordered_specs())
         if spec.condition is not None and spec.condition(inp, state, spec.thresholds)
     ]
     if not fired:
