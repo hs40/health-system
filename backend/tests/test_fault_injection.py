@@ -112,8 +112,12 @@ def test_non_guarded_error_is_retryable(session, settings, monkeypatch):
 # ============================================================
 def test_reconcile_found_updates_session(session, settings, monkeypatch):
     sid = _seed_session(session)
+    # reconcile_unknown 已拆到 plan_upload（ARCHITECTURE_REVIEW A.1.2），
+    # 它内部调用本模块的 scheduled_on，替换点必须在该模块命名空间。
+    from app.services import plan_upload
+
     monkeypatch.setattr(
-        plan_service,
+        plan_upload,
         "scheduled_on",
         lambda _s, _d: [{"itemType": "workout", "workoutId": 123, "id": 456}],
     )
@@ -125,7 +129,9 @@ def test_reconcile_found_updates_session(session, settings, monkeypatch):
 
 def test_reconcile_not_found_allows_resend(session, settings, monkeypatch):
     sid = _seed_session(session)
-    monkeypatch.setattr(plan_service, "scheduled_on", lambda _s, _d: [])
+    from app.services import plan_upload
+
+    monkeypatch.setattr(plan_upload, "scheduled_on", lambda _s, _d: [])
     res = plan_service.reconcile_unknown(session, sid, settings)
     assert res.status == "failed"
     assert "可安全重传" in (res.message or "")

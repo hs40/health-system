@@ -29,11 +29,8 @@ from app.domain.algo_version import algo_versions
 from app.domain.baseline import compute_all
 from app.domain.dates import week_start as _week_start_of
 from app.domain.load import (
-    CHRONIC_DAYS,
-    METHOD_MIXED,
     SPORT_TIERS,
     TIER_COUNTED,
-    acwr_for,
     hr_mod,
 )
 from app.domain.load.types import VS_INSUFFICIENT, VS_UNREGISTERED
@@ -48,11 +45,9 @@ from app.domain.rule_registry import ACWR_STALE_WINDOW_DAYS
 from app.errors import AppError
 from app.schemas.api import WeeklyPlan
 from app.schemas.domain import (
-    AcwrSnapshot,
     DailyReport,
     DataConflict,
     StandardDaily,
-    TrainingLoad,
     WeekPlanDay,
 )
 from app.schemas.enums import (
@@ -62,14 +57,12 @@ from app.schemas.enums import (
     QualityGrade,
     QualityLevel,
 )
+from app.services.reports.daily_load import latest_weight, loads_and_acwr
 from app.services.reports.goal_progress import load_goal_progress
 from app.services.reports.report_store import _persist
 from app.storage.derived_store import (
     load_acwr,
-    load_range,
-    upsert_acwr,
     upsert_baselines,
-    upsert_load,
 )
 from app.storage.standard_store import get_standard, load_standard_range
 
@@ -232,20 +225,6 @@ def _week_plan(session: Session, day: dt.date) -> list[WeekPlanDay] | None:
     days = (row.payload or {}).get("days")
     return [WeekPlanDay(**d) for d in days] if days else None
 
-
-def _latest_weight(session: Session, day: dt.date, lookback_days: int = 180) -> float | None:
-    """最近有效体重（前向沿用）。
-
-    体重是慢变量，单日缺失不该让自重动作整片变成「不可计算」——
-    实测 66 条力量活动有 11 条当日无体重。这里取 ``day`` 之前最近一次实测值，
-    **不用估算、不用均值**；超过 ``lookback_days`` 仍无记录则返回 ``None``
-    （宁可不可计算，也不拿半年前的体重充数）。
-    """
-    rows = load_standard_range(session, day - dt.timedelta(days=lookback_days), day)
-    for r in sorted(rows, key=lambda x: x.date, reverse=True):
-        if r.weight_kg:
-            return float(r.weight_kg)
-    return None
 
 
 # Garmin typeKey → 周计划 sport 值（2026-10-20：两套词汇在此单一归一）。
@@ -415,7 +394,7 @@ def _yesterday_training(
     # 逐活动负荷：与当日同口径（standardize_activities 的 contributions）
     sd = get_standard(session, y) or StandardDaily(date=y)
     daily = adapter.standardize_activities(
-        y, sd, body_weight_kg=_latest_weight(session, y) or sd.weight_kg
+        y, sd, body_weight_kg=latest_weight(session, y) or sd.weight_kg
     )
     score_by_id = {str(c.activity_id): c.score for c in daily.contributions}
     status = (completion or {}).get("status")
@@ -437,85 +416,6 @@ def _yesterday_training(
     return {"date": y.isoformat(), "activities": items}
 
 
-def recompute_day_load(
-    session: Session, day: dt.date, settings: Settings
-) -> TrainingLoad | None:
-    """按**已入库**的原始活动重算某日负荷并落库（需求 10.1–10.2）。
-
-    与 ``generate_daily`` 内的当日负荷计算同一口径；区别是不触碰基线/风险/日报，
-    供重算编排从最早受影响日逐日回放。
-    """
-    sd = get_standard(session, day) or StandardDaily(date=day)
-    adapter = GarminAdapter(settings)
-    daily = adapter.standardize_activities(
-        day, sd, body_weight_kg=_latest_weight(session, day) or sd.weight_kg
-    )
-    if not (daily.contributions or daily.not_computable):
-        return None
-    load = TrainingLoad(
-        date=day,
-        by_sport=daily.by_sport,
-        combined=daily.total,
-        method=METHOD_MIXED,
-        not_computable=[c.to_dict() for c in daily.not_computable],
-        unverified_sports=daily.unverified_sports,
-    )
-    upsert_load(session, load)
-    return load
-
-
-def refresh_acwr(session: Session, day: dt.date) -> AcwrSnapshot | None:
-    """按当前负荷序列重算某日 ACWR 并落库（需求 8.x，EWMA τ=7/28）。
-
-    只读已落库的 ``training_load``；缺失日按 0 参与 EWMA（需求 8.3）。
-    """
-    lookback = CHRONIC_DAYS * 2  # 让 EWMA 有足够预热
-    start = day - dt.timedelta(days=lookback)
-    history = load_range(session, start, day)
-    if not history:
-        return None
-    totals = {x.date: x.combined for x in history}
-    state = acwr_for(totals, day, lookback_start=start)
-    snap = AcwrSnapshot(
-        date=day,
-        acute=state.acute_ewma,
-        chronic=state.chronic_ewma,
-        ratio=state.ratio,
-        sufficient=state.sufficient,
-        note=state.note,
-    )
-    upsert_acwr(session, snap)
-    return snap
-
-
-def _loads_and_acwr(
-    session: Session, day: dt.date, sd: StandardDaily, settings: Settings
-) -> tuple[TrainingLoad | None, AcwrSnapshot | None]:
-    """计算并落库当日训练负荷与 ACWR。
-
-    口径（需求 4.4 / 8.1，用户 2026-10-20 确认）：
-    - 当日负荷：逐活动先标准化到 0–100，再按类型求和、跨类型相加；
-      无活动（休息日）→ ``None``；
-    - ACWR：**EWMA**（τ=7/28），不是简单日均比；慢性为 0 → 不产出；
-    - 不可计算的活动随 ``not_computable`` 一并落库，供日报披露。
-    """
-    adapter = GarminAdapter(settings)
-    daily = adapter.standardize_activities(
-        day, sd, body_weight_kg=_latest_weight(session, day) or sd.weight_kg
-    )
-    today_load = None
-    if daily.contributions or daily.not_computable:
-        today_load = TrainingLoad(
-            date=day,
-            by_sport=daily.by_sport,
-            combined=daily.total,
-            method=METHOD_MIXED,
-            not_computable=[c.to_dict() for c in daily.not_computable],
-            unverified_sports=daily.unverified_sports,
-        )
-        upsert_load(session, today_load)
-
-    return today_load, refresh_acwr(session, day)
 
 
 def generate_daily(
@@ -578,7 +478,7 @@ def generate_daily(
     missing_critical = quality.missing if quality.grade == QualityGrade.INSUFFICIENT else []
 
     # 负荷与 ACWR 必须在风险判定**之前**算好：P1/P2/P3 全部依赖 ACWR。
-    load, acwr_snap = _loads_and_acwr(session, day, sd, settings)
+    load, acwr_snap = loads_and_acwr(session, day, sd, settings)
 
     risk = evaluate(
         _risk_input(
@@ -662,7 +562,7 @@ def generate_daily(
         load=load,
         acwr=acwr_snap,
         # 需求 5.4：当日生效心率参数随日报披露。取 hr_mod 默认常量 ——
-        # 与 _loads_and_acwr → GarminAdapter → compute_day 用的是同一组值。
+        # 与 loads_and_acwr → GarminAdapter → compute_day 用的是同一组值。
         hr_params=hr_mod.params().to_dict(),
         sleep={
             "duration_sec": sd.sleep_duration_sec,

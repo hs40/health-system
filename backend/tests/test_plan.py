@@ -70,7 +70,7 @@ def test_sport_mapping_strength_and_cardio():
 def test_task_state_idempotent_reuse(tmp_path, monkeypatch):
     from sqlmodel import Session, SQLModel, create_engine
 
-    from app.orchestrator import task_state
+    from app.storage import task_state
 
     engine = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine)
@@ -96,7 +96,7 @@ def test_task_state_idempotent_reuse(tmp_path, monkeypatch):
 def test_task_state_unknown_requires_reconcile():
     from sqlmodel import Session, SQLModel, create_engine
 
-    from app.orchestrator import task_state
+    from app.storage import task_state
 
     engine = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine)
@@ -111,7 +111,7 @@ def test_task_state_unknown_requires_reconcile():
 def test_task_state_failed_is_retryable():
     from sqlmodel import Session, SQLModel, create_engine
 
-    from app.orchestrator import task_state
+    from app.storage import task_state
 
     engine = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine)
@@ -125,7 +125,7 @@ def test_task_state_failed_is_retryable():
 def test_task_state_finish_missing_raises():
     from sqlmodel import Session, SQLModel, create_engine
 
-    from app.orchestrator import task_state
+    from app.storage import task_state
 
     engine = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine)

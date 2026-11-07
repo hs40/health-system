@@ -13,12 +13,11 @@
 
 from __future__ import annotations
 
+from app.services.reports.daily_load import recompute_day_load, refresh_acwr
 from app.services.reports.daily_report import (
     build_week_cards,
     detect_day_conflicts,
     generate_daily,
-    recompute_day_load,
-    refresh_acwr,
 )
 from app.services.reports.goal_progress import load_goal_progress
 from app.services.reports.period_report import (

@@ -26,10 +26,10 @@ import json
 from sqlmodel import Session, select
 
 from app.db.models import TaskRunRow
-from app.orchestrator import task_state
 from app.schemas.domain import TaskError
 from app.schemas.enums import AuditCategory, ErrorCode, TaskStatus, TaskType
 from app.services import report_service
+from app.storage import task_state
 from app.storage.audit_store import record as audit
 
 # 任务类型与状态口径
