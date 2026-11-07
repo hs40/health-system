@@ -324,8 +324,9 @@ npm run gen:api      # 后端离线导出 → src/api/schema.d.ts
 ```
 
 无需先启动后端：后端通过 `app.openapi()` 直接导出（不连数据库）。生成物
-`schema.d.ts` 按 `.gitignore` 忽略，需要时重建即可。`src/api/types.ts` 目前仍为
-手工维护并与后端契约对齐。
+`schema.d.ts` 按 `.gitignore` 忽略——**策略是构建时生成、不入库**，需要时重建即可。
+`src/api/types.ts` 目前仍为手工维护并与后端契约对齐；迁移到生成类型时，
+CI 必须先跑 `gen:api` 再做类型检查，否则类型文件不存在。
 
 ### 7.2 静态检查
 
@@ -455,14 +456,19 @@ health-system/
 13. ~~`gen:api` 必须先起后端、失败无提示~~ → 后端离线导出 OpenAPI，`npm run gen:api` 一次跑通（A.9）。
 14. ~~`src.bak-20261022` / 27 个 `vite.config.ts.timestamp-*` 残留~~ → 已清理（均未入库）。
 
+已解决（v3.3.2，第二批 · 前端，续）：
+
+15. ~~`WeeklyPlanPage.tsx` 757 行~~ → 展示区块外提到 `components/plan/weekly/`，
+    降至 413 行，最大子模块 141 行；文案双向 diff 确认无用户可见变化（A.1.2 前端）。
+
 尚存：
 
 1. 校准结果尚未外置为数据文件，候选阈值仍需人工写进 CLI 参数（A.5.2 剩余，P1）。
 2. 日志暂未贯穿采集端：Nginx access log 与前端请求缺 `request_id` 关联（A.8.1 剩余，P2）。
-3. 前端 `WeeklyPlanPage.tsx`（757 行）待拆分，单独立项（A.1.2 前端剩余，P1）。
-4. 配置中存在「候选阈值待验证」注释，需产品化时固化（A.5.2，P1）。
-5. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
+3. 配置中存在「候选阈值待验证」注释，需产品化时固化（A.5.2，P1）。
+4. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
    `gen:api` 产出的 `schema.d.ts` 尚未接入类型层（A.9，P2）。
+   **策略已定**：`schema.d.ts` 构建时生成、不入库；迁移时 CI 需先跑 `gen:api` 再做类型检查。
 
 ### 9.4 给 AI 编码代理
 

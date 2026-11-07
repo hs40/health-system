@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.3.1）
+## 执行进度（截至 2026-11-07，v3.3.2）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -25,6 +25,8 @@
 | A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ⬜ 待立项 |
 | A.1.2 前端 | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib） | ✅ v3.3.1 |
 | A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
+| A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
+| A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 需先 `gen:api`） | ⬜ 待立项 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -71,6 +73,21 @@
 - **清理**：`frontend/src.bak-20261022/`（198K，无引用）、27 个
   `vite.config.ts.timestamp-*.mjs`（vite 异常退出残留）——均未入库，仅本地磁盘。
 - **未做**：`WeeklyPlanPage.tsx`（757 行）单独立项，本轮不动。
+
+**v3.3.2 落地细节（第二批 · 前端，续）**：
+
+- **WeeklyPlanPage 拆分**：判据与 DailyPage 一致——「有没有状态」。页面只留数据编排与
+  交互状态（react-query hooks、mutation、拖动排序、日期切换、modal 开关），展示区块外提到
+  `components/plan/weekly/`：`format`(50) / `WeekHeader`(57) / `DayCard`(141) /
+  `SessionPrescription`(72) / `EvaluationPanel`(111) / `PlanActionBar`(69)。
+  757 → 413 行，最大子模块 141 行。子组件一律 props 进、回调出，不自己发请求。
+- **行为零变化的验证方式**：提取拆分前后的中文字符串字面量集合做**双向 diff**。
+  原文件有而新代码缺失 4 条、新代码多出 19 条，逐条确认**全在注释里**，无用户可见文本变化。
+  辅以 `tsc --noEmit` 与 `build` 通过（`WeeklyPlanPage` 分包 15.79 kB / gzip 5.90 kB）。
+- **顺带修掉每次 render 重建**：`SessionPrescription` 的 `stepText` 提到组件外；
+  `PlanActionBar` 的状态文案抽成 `statusText()`（原先三元嵌套在 JSX 里）。
+- **`schema.d.ts` 策略已定**：**构建时生成、不入库**（已写入 `.gitignore`）。
+  `types.ts` 的迁移延后——迁移后 CI 必须先跑 `gen:api` 再做类型检查，否则类型文件不存在。
 
 > 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。
