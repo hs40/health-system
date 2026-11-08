@@ -99,6 +99,19 @@ jobs:
           name: api-schema
           path: frontend/src/api
 
+      - name: Smoke-test frontend build in alpine
+        # 在真正构建镜像之前，用与镜像 stage 1 完全一致的基础镜像跑一遍构建。
+        # Dockerfile 里的 RUN 失败时，Actions 只能在注解里给出「did not complete
+        # successfully: exit code: 1」，拿不到 tsc / vite 的真实报错；
+        # 这一步把同样的命令搬到普通 step 里跑，日志完整可见。
+        # 环境一致（node:22-alpine + 同样的 npm install）→ 结论可迁移。
+        run: |
+          docker run --rm \
+            -v "$PWD/frontend:/fe" \
+            -w /fe \
+            node:22-alpine \
+            sh -c "npm install --no-audit --no-fund && npx tsc --noEmit && npx vite build"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
