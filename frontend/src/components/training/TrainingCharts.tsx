@@ -2,10 +2,23 @@
 import { useMemo } from 'react'
 import type { EChartsOption } from 'echarts'
 import { Chart, CHART_COLORS } from '../ui/Chart'
-import type { HrPoint, HrZoneStats, StrengthTimeline } from '../../api/training'
+import type { HrDataState, HrPoint, HrZoneStats, StrengthTimeline } from '../../api/training'
+
+/**
+ * 三态占位文案：把「FIT 明细未同步」与「本次确实无逐秒心率」分开。
+ * NAS 单容器只挂 data/raw 却没搬 fit_jsonl 时，两图以前一律显示
+ * 「本次无逐秒心率数据」，让用户误以为是软件坏了；现在给出可操作的提示。
+ */
+function hrEmptyText(state: HrDataState): string {
+  if (state === 'fit_missing') {
+    return '逐秒心率明细未同步：缺少该活动的 FIT 数据文件，请在 NAS 上补齐 data/raw/garmin/fit_jsonl/ 后重试'
+  }
+  if (state === 'no_hr_samples') return '本次运动未记录逐秒心率'
+  return '本次无逐秒心率数据'
+}
 
 /** §8.1 心率区间横向柱状图：只展示实际各区间分布，不展示计划目标区间。 */
-export function HrZoneChart({ stats }: { stats: HrZoneStats }) {
+export function HrZoneChart({ stats, state }: { stats: HrZoneStats; state: HrDataState }) {
   const option = useMemo<EChartsOption>(
     () => ({
       grid: { left: 8, right: 28, top: 10, bottom: 8, containLabel: true },
@@ -19,14 +32,14 @@ export function HrZoneChart({ stats }: { stats: HrZoneStats }) {
       },
       yAxis: {
         type: 'category',
-        data: stats.zones.map((z) => `${z.name} ${z.low_bpm}–${z.high_bpm}`),
+        data: (stats.zones ?? []).map((z) => `${z.name} ${z.low_bpm}–${z.high_bpm}`),
         axisLabel: { color: CHART_COLORS.ink3, fontSize: 11 },
         axisTick: { show: false },
       },
       series: [
         {
           type: 'bar',
-          data: stats.zones.map((z) => z.seconds),
+          data: (stats.zones ?? []).map((z) => z.seconds),
           barWidth: '58%',
           itemStyle: { color: CHART_COLORS.accent, borderRadius: [0, 4, 4, 0] },
           label: { show: true, position: 'right', color: CHART_COLORS.ink3, fontSize: 10, formatter: '{c}s' },
@@ -39,14 +52,14 @@ export function HrZoneChart({ stats }: { stats: HrZoneStats }) {
     <Chart
       option={option}
       height={200}
-      empty={stats.counted_seconds === 0}
-      emptyText="本次无逐秒心率数据"
+      empty={state !== 'ok'}
+      emptyText={hrEmptyText(state)}
     />
   )
 }
 
 /** §8.1 时间—心率折线图：缺失心率断线（connectNulls=false），不补 0（Q8）。 */
-export function HrSeriesChart({ points }: { points: HrPoint[] }) {
+export function HrSeriesChart({ points, state }: { points: HrPoint[]; state: HrDataState }) {
   const option = useMemo<EChartsOption>(
     () => ({
       grid: { left: 8, right: 16, top: 12, bottom: 8, containLabel: true },
@@ -89,15 +102,16 @@ export function HrSeriesChart({ points }: { points: HrPoint[] }) {
     <Chart
       option={option}
       height={220}
-      empty={points.length === 0}
-      emptyText="本次无逐秒心率数据"
+      empty={state !== 'ok'}
+      emptyText={hrEmptyText(state)}
     />
   )
 }
 
 /** §8.4 / Q12 力量时间轴：动作显示在对应时间段上，休息统一用秒，不写起止时刻。 */
 export function StrengthTimelineView({ timeline }: { timeline: StrengthTimeline }) {
-  const { segments, active_seconds, rest_seconds } = timeline
+  const { active_seconds, rest_seconds } = timeline
+  const segments = timeline.segments ?? []
   return (
     <div className="space-y-3">
       <div

@@ -347,3 +347,49 @@ def test_swimming_other_hiit_templates_and_no_fabricated_metrics(tmp_path: Path)
     hiit_metrics = {x["label"]: x["value"] for x in hiit["metrics"]}
     assert hiit_metrics["距离"] == "该运动不支持"
     assert hiit["segments"][0]["name_zh"] == "跑步"
+
+
+def test_activity_detail_discloses_hr_data_state(tmp_path: Path) -> None:
+    """详情必须区分三态：FIT 明细未同步 / 本次无逐秒心率 / 有逐秒心率。
+
+    NAS 单容器缺 ``data/raw/garmin/fit_jsonl/`` 时，两张心率图一起显示
+    「本次无逐秒心率数据」却查不出原因。显式状态让前端能给出可操作的提示，
+    而不是把「数据没搬全」伪装成「这次运动本来就没心率」。
+    """
+    day = "2026-11-05"
+
+    # 1) FIT 明细齐全且含逐秒心率 → ok，两图都有数据
+    ok_root = tmp_path / "ok"
+    _write_day(ok_root, day, [_act("a1", "running", "2026-11-05 07:00:00")])
+    _write_fit(
+        ok_root,
+        "a1",
+        [
+            {"m": "record", "d": {"timestamp": "2026-11-05T07:00:00+00:00", "heart_rate": 130}},
+            {"m": "record", "d": {"timestamp": "2026-11-05T07:00:01+00:00", "heart_rate": 140}},
+        ],
+    )
+    ok = activity_detail(ok_root / ROOT, day)["activity"]
+    assert ok["hr_data_state"] == "ok"
+    assert len(ok["hr_series"]) == 2
+    assert ok["hr_zones"]["counted_seconds"] > 0
+
+    # 2) 完全没有 fit_jsonl 目录（NAS v3.4.3 故障现场）→ fit_missing
+    nas_root = tmp_path / "nas"
+    _write_day(nas_root, day, [_act("a2", "running", "2026-11-05 07:00:00")])
+    missing = activity_detail(nas_root / ROOT, day)["activity"]
+    assert missing["hr_data_state"] == "fit_missing"
+    assert missing["hr_series"] == []
+    assert missing["hr_zones"]["counted_seconds"] == 0
+
+    # 3) FIT 文件在，但 record 不含 heart_rate（冥想/呼吸类）→ no_hr_samples
+    nohr_root = tmp_path / "nohr"
+    _write_day(nohr_root, day, [_act("a3", "running", "2026-11-05 07:00:00")])
+    _write_fit(
+        nohr_root,
+        "a3",
+        [{"m": "record", "d": {"timestamp": "2026-11-05T07:00:00+00:00"}}],
+    )
+    nohr = activity_detail(nohr_root / ROOT, day)["activity"]
+    assert nohr["hr_data_state"] == "no_hr_samples"
+    assert len(nohr["hr_series"]) == 1

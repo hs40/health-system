@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -381,31 +381,216 @@ class MessageDeleteResponse(BaseModel):
     deleted: int = 0
 
 
+# ============================================================
+# 运动训练页面（三期 §7/§8）
+# ============================================================
+# 2026-11-08：此前 ``/api/activities/*`` 返回裸 ``dict``，OpenAPI 里是
+# ``{[key: string]: unknown}``，前端只能手抄一套 interface。补上契约后
+# ``frontend/src/api/training.ts`` 改为从 ``schema.d.ts`` 派生。
+# 关键字段 ``hr_data_state`` 让前端能区分「FIT 明细未同步」与「本次确实
+# 无逐秒心率」——NAS 单容器缺 fit_jsonl 时两张 HR 图一起空白的根因。
+class CalendarItem(BaseModel):
+    seq: int
+    activity_id: str
+    type: str
+    label: str
+    emoji: str
+    color: str
+    template: str
+
+
+class CalendarDay(BaseModel):
+    date: str
+    items: list[CalendarItem] = Field(default_factory=list)
+
+
+class CalendarType(BaseModel):
+    key: str
+    label: str
+    emoji: str
+    color: str
+    template: str
+
+
+class CalendarResponse(BaseModel):
+    ym: str
+    filter: str
+    prev_ym: str
+    next_ym: str
+    types: list[CalendarType] = Field(default_factory=list)
+    days: list[CalendarDay] = Field(default_factory=list)
+
+
+class MetricRow(BaseModel):
+    label: str
+    value: str
+
+
+class HrZoneRow(BaseModel):
+    name: str
+    low_bpm: int
+    high_bpm: int
+    seconds: int
+
+
+class HrZoneStats(BaseModel):
+    """Q8：逐秒 record + 项目 Karvonen 五区；缺失秒数单独披露，不补 0。"""
+
+    zones: list[HrZoneRow] = Field(default_factory=list)
+    counted_seconds: int
+    below_zone_seconds: int
+    missing_seconds: int
+    method: str
+    max_hr: int
+    rest_hr: int
+
+
+class HrPoint(BaseModel):
+    t: str | None = None
+    hr: float | None = None
+
+
+class TrainingEffect(BaseModel):
+    label: str
+    label_raw: str | None = None
+    aerobic: str | None = None
+    anaerobic: str | None = None
+
+
+class SegmentRow(BaseModel):
+    """跑步 Lap 分段与 HIIT/力量动作段共用，字段按模板取用（可缺省）。"""
+
+    index: int | None = None
+    kind: Literal["exercise", "rest"] | None = None
+    label: str | None = None
+    key: str | None = None
+    name_zh: str | None = None
+    intensity: str | None = None
+    duration_sec: float = 0
+    distance_m: float | None = None
+    avg_hr: float | None = None
+    max_hr: float | None = None
+    reps: int | None = None
+    weight_kg: float | None = None
+
+
+class StrengthTimeline(BaseModel):
+    segments: list[SegmentRow] = Field(default_factory=list)
+    active_seconds: float
+    rest_seconds: float
+    formal_exercise_count: int
+    formal_exercises: list[str] = Field(default_factory=list)
+
+
+class MuscleRow(BaseModel):
+    code: str
+    zh: str
+    en: str
+    primary_moves: list[str] = Field(default_factory=list)
+    secondary_moves: list[str] = Field(default_factory=list)
+
+
+class MuscleRegion(BaseModel):
+    code: str
+    zh: str
+    en: str
+    level: Literal["primary", "secondary", "none"]
+
+
+class SwimmingLength(BaseModel):
+    stroke: str | None = None
+    duration_sec: float
+    strokes: float | None = None
+    avg_speed: float | None = None
+    length_type: str | None = None
+
+
+class SwimmingData(BaseModel):
+    distance_m: float | None = None
+    pool_length_m: float | None = None
+    strokes: float | None = None
+    active_lengths: float | None = None
+    average_swolf: float | None = None
+    stroke_types: list[str] = Field(default_factory=list)
+    lengths: list[SwimmingLength] = Field(default_factory=list)
+
+
+DetailTemplate = Literal[
+    "running", "indoor_cardio", "hiit", "strength", "swimming", "other"
+]
+HrDataState = Literal["ok", "no_hr_samples", "fit_missing"]
+
+
+class ActivityDetail(BaseModel):
+    activity_id: str
+    type: str
+    label: str
+    template: DetailTemplate
+    name: str
+    duration_sec: int
+    metrics: list[MetricRow] = Field(default_factory=list)
+    hr_zones: HrZoneStats
+    hr_series: list[HrPoint] = Field(default_factory=list)
+    hr_data_state: HrDataState
+    training_effect: TrainingEffect
+    segments: list[SegmentRow] = Field(default_factory=list)
+    # 以下四组仅对应模板的活动才带出，其余为 None
+    timeline: StrengthTimeline | None = None
+    muscle_table: list[MuscleRow] | None = None
+    muscles: list[MuscleRegion] | None = None
+    swimming: SwimmingData | None = None
+
+
+class DetailResponse(BaseModel):
+    date: str
+    seq: int
+    total: int
+    has_training: bool
+    prev_date: str
+    next_date: str
+    activity: ActivityDetail | None = None
+
+
 __all__ = [
+    "ActivityDetail",
     "ApiError",
     "ApiErrorDetail",
     "AuditListResponse",
     "Baseline",
+    "CalendarDay",
+    "CalendarItem",
+    "CalendarResponse",
+    "CalendarType",
     "DailyReport",
     "DataQualityReport",
     "DepStatus",
+    "DetailResponse",
+    "DetailTemplate",
     "EnvironmentDaily",
     "EnvironmentResponse",
     "FaultListResponse",
     "FaultReportRequest",
     "FaultRecoveryTask",
     "HealthResponse",
+    "HrDataState",
+    "HrPoint",
+    "HrZoneRow",
+    "HrZoneStats",
     "LocationsResponse",
     "LocationsUpdateRequest",
     "Message",
     "MessageDeleteRequest",
     "MessageDeleteResponse",
     "MessageListResponse",
+    "MetricRow",
     "MonthlyReport",
+    "MuscleRegion",
+    "MuscleRow",
     "Plan12Week",
     "PlanEvaluation",
     "PrecheckResponse",
     "RiskLevel",
+    "SegmentRow",
     "SeriesPoint",
     "SeriesResponse",
     "StandardDetail",
@@ -416,8 +601,12 @@ __all__ = [
     "StrategyResponse",
     "StrategyRestoreRequest",
     "StrategyVersion",
+    "StrengthTimeline",
+    "SwimmingData",
+    "SwimmingLength",
     "SyncRequest",
     "TaskListResponse",
+    "TrainingEffect",
     "TrainingSession",
     "UploadResult",
     "WeeklyPlan",

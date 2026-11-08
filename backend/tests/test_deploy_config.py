@@ -607,3 +607,54 @@ class TestNginxConfigContext:
         dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
         assert "deploy/nginx.http.single.conf /etc/nginx/hs-http.conf" in dockerfile
         assert "nginx -t" in dockerfile
+
+
+# ---------- NAS 部署前自检 FIT 明细（v3.4.4 跑步两图空白事故回归） ----------
+
+
+class TestFitJsonlPreflight:
+    """部署脚本必须在启动容器前自检 ``fit_jsonl/``，且只检查、不自动搬运。
+
+    v3.4.3 单容器上跑步详情页「心率区间」「时间—心率」两图同时空白：容器
+    只挂了 ``data/raw``，``fit_jsonl/`` 没搬过去；``load_fit_messages`` 当时
+    静默返回空 dict，前端只能显示「本次无逐秒心率数据」。部署脚本当时只
+    ``mkdir -p data/raw``，没有任何提示，运维完全看不出是数据没搬全。
+
+    自检必须给出可操作告警；但 raw 含个人健康信息，搬运须由人显式执行，
+    脚本不得自动 cp/rsync。
+    """
+
+    @staticmethod
+    def _script() -> str:
+        return _read(REPO_ROOT / "deploy" / "nas_deploy_single.sh")
+
+    @staticmethod
+    def _code_lines() -> list[str]:
+        """只看指令行：注释里会提到 fit_jsonl 作为说明，不该让断言假绿。"""
+        return [
+            ln
+            for ln in TestFitJsonlPreflight._script().splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+
+    def test_script_checks_fit_jsonl_before_starting_container(self):
+        code = "\n".join(self._code_lines())
+        fit_at = code.find("fit_jsonl")
+        up_at = code.find("up -d")
+        assert fit_at != -1, "部署脚本未检查 data/raw/garmin/fit_jsonl/"
+        assert up_at != -1, "找不到容器启动指令"
+        assert fit_at < up_at, "fit_jsonl 自检必须在启动容器之前，否则告警来得太晚"
+
+    def test_script_warns_about_heart_rate_charts(self):
+        """告警要点明影响，不能只说「目录为空」——运维不知道后果会忽略。"""
+        code = "\n".join(self._code_lines())
+        assert "逐秒心率" in code, "自检告警未点明影响：逐秒心率 / 两张心率图"
+        assert "fit_jsonl" in code
+
+    def test_script_only_checks_and_never_moves_health_data(self):
+        """只检查、不自动搬运含个人健康信息的 raw 数据。"""
+        code = "\n".join(self._code_lines())
+        for banned in ("cp -r", "cp -a", "rsync", "scp "):
+            assert banned not in code, (
+                f"部署脚本出现 {banned} —— 健康数据不应由脚本自动搬运"
+            )

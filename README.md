@@ -266,6 +266,22 @@ HS_TAG=v3.1.0 bash nas_deploy_single.sh
 
 数据重灌与镜像发版分离，见 `scripts/pack_data.sh`。
 
+**FIT 逐秒明细必须随 `data/` 一起搬**（运动训练详情两张心率图的唯一数据源）：
+
+容器内 `RAW_DATA_DIR=/data/raw`，宿主卷是 `./data/raw:/data/raw`。部署脚本只
+`mkdir -p data/raw` 并**不搬运**数据（raw 含个人健康信息，搬运须显式执行）。
+若 NAS 上缺 `data/raw/garmin/fit_jsonl/`，跑步等有氧训练的「心率区间」
+「时间—心率」两图会只显示占位。从本机同步一次：
+
+```bash
+# 在本机（Git Bash / WSL）执行；NAS SSH 端口 222
+scp -P 222 -r "data/raw/garmin/fit_jsonl" \
+  root@192.168.2.2:/volume1/docker/health-system/data/raw/garmin/
+```
+
+`deploy/nas_deploy_single.sh` 启动前会自检该目录：为空/缺失时打印可操作告警，
+但**不阻断部署、不自动搬运**。补齐后刷新详情页即可，无需重建镜像。
+
 > ⚠️ **禁止将 18080 直接暴露到公网**
 >
 > 本系统是**单用户、无登录、无鉴权**设计（见 `AGENTS.md` §1），且 CORS 允许任意来源。
@@ -549,6 +565,23 @@ health-system/
     `.gitignore` 第 47 行**早已有** `*.timestamp-*.mjs` 规则，这些文件从未入库；
     但 vite 把 `vite.config.ts` 编译成临时 `.mjs` 后的清理被 safe-delete hook
     拦住，每次 build 都会再生——属本机现象，仓库层只保证「git 索引里没有」。
+
+已解决（v3.4.4，跑步训练两张心率图空白）：
+
+25. ~~NAS 单容器缺 `fit_jsonl/`，两图只显示「本次无逐秒心率数据」~~ →
+    `load_fit_messages` 改为返回 `FitMessages(by_type, source)`，缺文件显式
+    `source="missing"`；`activity_detail` 给出 `hr_data_state` 三态
+    （`ok` / `no_hr_samples` / `fit_missing`），前端把「FIT 明细未同步」与
+    「本次确实无逐秒心率」分开显示。两图共用同一 `record` 数据源，
+    以前一起空白时无从判断是数据没搬全还是软件故障。
+26. ~~训练详情契约是裸 `dict`，`training.ts` 手抄 173 行 interface~~ →
+    `/api/activities/detail` 与 `/calendar` 补 Pydantic `response_model`，
+    `frontend/src/api/training.ts` 改为从 `schema.d.ts` 派生（A.9 收尾）。
+    契约收紧后派生类型的 optional 字段由组件 `?? []` 兜底，`tsc` 把关。
+27. ~~NAS 部署脚本只建目录、不提示数据没搬全~~ →
+    `deploy/nas_deploy_single.sh` 启动前自检 `data/raw/garmin/fit_jsonl/`，
+    为空/缺失打印可操作告警；只检查、不自动搬运健康数据。
+    回归测试：`TestFitJsonlPreflight`（自检在启动前、告警点明影响、不出现搬运指令）。
 
 尚存：
 

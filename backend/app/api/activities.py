@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.config import Settings, get_settings
 from app.errors import AppError
+from app.schemas.api import CalendarResponse, DetailResponse
 from app.schemas.enums import ErrorCode
 from app.services.training_service import activity_detail, calendar_month
 
@@ -27,7 +28,7 @@ def _raw_root(settings: Settings) -> Path:
     return Path(settings.raw_data_dir) / "garmin"
 
 
-@router.get("/calendar")
+@router.get("/calendar", response_model=CalendarResponse)
 def get_calendar(
     ym: str = Query(...),
     type_: str = Query("all", alias="type"),
@@ -40,7 +41,7 @@ def get_calendar(
     return calendar_month(_raw_root(settings), ym, type_filter)
 
 
-@router.get("/detail")
+@router.get("/detail", response_model=DetailResponse)
 def get_detail(
     date: str = Query(...),
     seq: int = Query(1, ge=1),

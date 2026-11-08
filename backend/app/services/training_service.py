@@ -96,15 +96,26 @@ def _build_activity(raw_root: Path, a: ActivityRef) -> dict:
 
     template = template_of(a.activity_type)
     style = style_of(a.activity_type)
-    msgs = load_fit_messages(
+    fit = load_fit_messages(
         raw_root, a.activity_id, {"record", "session", "lap", "length", "set", "split"}
     )
+    msgs = fit.by_type
     records = msgs.get("record", [])
 
     hrs: list[int | None] = []
     for r in records:
         v = r.get("heart_rate")
         hrs.append(int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None)
+
+    hr_series = tr.build_hr_series(records)
+    # 三态供前端区分「FIT 明细未同步」与「本次确实无逐秒心率」。NAS 单容器
+    # 只挂了 data/raw 却没搬 fit_jsonl 时，这里必须是 fit_missing，不能静默空数组。
+    if fit.source == "missing":
+        hr_data_state = "fit_missing"
+    elif any(p["hr"] is not None for p in hr_series):
+        hr_data_state = "ok"
+    else:
+        hr_data_state = "no_hr_samples"
 
     out: dict = {
         "activity_id": a.activity_id,
@@ -120,7 +131,8 @@ def _build_activity(raw_root: Path, a: ActivityRef) -> dict:
         + tr.build_metrics(a.payload, template),
         # Q8：逐秒 record + 项目 Karvonen 五区重算，不展示 Garmin hrTimeInZone_*
         "hr_zones": hr_zones.summarize(hrs).to_dict(),
-        "hr_series": tr.build_hr_series(records),
+        "hr_series": hr_series,
+        "hr_data_state": hr_data_state,
         "training_effect": tr.training_effect(a.payload),
         "segments": [],
     }

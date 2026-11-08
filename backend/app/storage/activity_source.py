@@ -138,20 +138,36 @@ def load_laps(raw_root: Path, activity_id: str) -> list[dict[str, Any]]:
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class FitMessages:
+    """FIT jsonl 读取结果。
+
+    ``source`` 明确区分「明细文件缺失」（``missing``）与「文件存在、只是本类
+    消息为空」（``present``）。2026-11-08 之前本函数缺文件时静默返回裸 ``{}``，
+    详情页无法分辨「NAS 上 FIT 明细没同步」和「这次运动本来就没逐秒心率」，
+    两张心率图一律显示「本次无逐秒心率数据」——这是跑步详情页两图同时空白
+    却查不出原因的根因。
+    """
+
+    by_type: dict[str, list[dict[str, Any]]]
+    source: str  # present | missing
+
+
 def load_fit_messages(
     raw_root: Path,
     activity_id: str,
     types: set[str] | None = None,
-) -> dict[str, list[dict[str, Any]]]:
+) -> FitMessages:
     """一次解压 FIT jsonl，按消息类型分组（详情页一次拿齐所需消息）。
 
     ``types`` 为 ``None`` 时保留全部类型；指定时只保留给定类型。
     坏行、非 dict 的 ``d`` 一律跳过 —— raw 是外部来源，容忍脏数据比崩溃重要。
+    文件不存在返回 ``source="missing"``，绝不静默退化成空 dict。
     """
     path = Path(raw_root) / "fit_jsonl" / f"{activity_id}.jsonl.gz"
     out: dict[str, list[dict[str, Any]]] = {}
     if not path.exists():
-        return out
+        return FitMessages(by_type=out, source="missing")
     try:
         with gzip.open(path, "rt", encoding="utf-8") as f:
             for line in f:
@@ -170,12 +186,13 @@ def load_fit_messages(
                 if isinstance(d, dict):
                     out.setdefault(m, []).append(d)
     except (OSError, EOFError):
-        return out
-    return out
+        pass  # 保留已读到的部分；文件存在即 present
+    return FitMessages(by_type=out, source="present")
 
 
 __all__ = [
     "ActivityRef",
+    "FitMessages",
     "load_activities",
     "load_fit_messages",
     "load_laps",

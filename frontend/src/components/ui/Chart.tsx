@@ -62,7 +62,7 @@ export function Chart({
   if (empty) {
     return (
       <div
-        className="flex items-center justify-center rounded-[var(--hs-r-sm)] border border-dashed text-[var(--hs-fs-small)]"
+        className="flex items-center justify-center rounded-[var(--hs-r-sm)] border border-dashed px-4 text-center text-[var(--hs-fs-small)] leading-relaxed"
         style={{
           height: height ?? 200,
           borderColor: 'var(--hs-border)',

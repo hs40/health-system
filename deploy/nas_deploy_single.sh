@@ -80,6 +80,26 @@ fi
 log "2. 准备数据目录"
 mkdir -p data/raw data/db data/audit data/garmin_tokens
 
+log "2.1 FIT 逐秒明细自检"
+# 运动训练详情的「心率区间」「时间—心率」两张图只读
+# data/raw/garmin/fit_jsonl/<activity_id>.jsonl.gz，不读 activities/*.json。
+# 只挂 activities 而没有 fit_jsonl 时，两图会一起显示占位（v3.4.3 实测）。
+# raw 含个人健康信息，脚本只检查并告警，搬运必须由你在 NAS 上显式执行。
+FIT_DIR="data/raw/garmin/fit_jsonl"
+FIT_COUNT=0
+if [ -d "$FIT_DIR" ]; then
+  FIT_COUNT=$(find "$FIT_DIR" -type f -name '*.jsonl.gz' 2>/dev/null | wc -l | tr -d '[:space:]') || FIT_COUNT=0
+fi
+if [ "$FIT_COUNT" -eq 0 ]; then
+  echo "  [警告] $FIT_DIR 缺失或为空（0 个 *.jsonl.gz）。"
+  echo "     运动训练详情的「心率区间」「时间—心率」两张图需要逐秒心率明细，"
+  echo "     缺少时只会显示占位，且无法区分「数据未同步」与「本次无心率」。"
+  echo "     请把本机 data/raw/garmin/fit_jsonl/ 同步到 NAS 同名目录后重新打开详情页。"
+  echo "     本脚本不自动搬运：raw 含个人健康信息，搬运须由你显式执行。"
+else
+  echo "  FIT 逐秒明细：$FIT_COUNT 个 *.jsonl.gz，两张心率图可读"
+fi
+
 log "3. 检查端口并清理旧容器"
 # 升级场景下旧容器 hs-app 正占用 PORT，这是预期情况（稍后会重建它）。
 # 但若端口被「外部进程」占用，则不能先删容器再报错——那会让服务无谓中断。

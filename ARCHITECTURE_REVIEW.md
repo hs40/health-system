@@ -5,145 +5,147 @@
 
 ---
 
-## 执行进度（截至 2026-11-08，v3.4.3）
 
-| 编号 | 项 | 状态 |
-|---|---|---|
-| A.2.1 / C.4.1 | `api/ops.py` 移除开发机硬编码路径 | ✅ v3.1.0 |
-| A.9.1 | CI 前置 quality 门禁（ruff + pytest） | ✅ v3.1.0 |
-| A.4.2 / C.4.5 | 下游步骤失败结构化写入 Fault 表 | ✅ v3.1.0 |
-| A.6.1 | 公网暴露风险声明（README §5.5） | ✅ v3.1.0 |
-| A.3.2 | FIT 双依赖测试稳定性 | ✅ 已确认非缺陷；CI 必装全量依赖 |
-| A.2.2 / C.4.5 | 调度依赖显式化 + 消除 services→orchestrator 层级倒置 | ✅ v3.2.0 |
-| A.1.2 部分 | `daily_report.py` 拆分（725→625，负荷/ACWR 抽出） | ✅ v3.2.0 |
-| A.1.2 部分 | `plan_service.py` 拆分（733→约 430，上传/12周/上下文抽出） | ✅ v3.2.0 |
-| A.1.1 / A.10.1 | 分层约束与体量预算自动化（`test_architecture_layering.py`） | ✅ v3.2.0 |
-| A.1.2 / C.4.2 | `domain/verify.py` 拆分为 `verify/` 包（1016 行 → 9 模块，最大 298 行） | ✅ v3.3.0 |
-| A.8.1 | 结构化日志：单点配置 + `task_id`/`date` 上下文注入 + 命名规范 | ✅ v3.3.0 |
-| A.5.2 | 规则阈值校准：双规则集对照回放（`domain/calibration.py`） | ✅ v3.3.0 首版 |
-| A.5.2 剩余 | 校准结果接入「候选阈值外置为数据文件」 | ✅ v3.4.0 |
-| A.8.1 剩余 | 采集端（Nginx access log / 前端）统一 request_id | ✅ v3.4.0 |
-| A.1.2 前端 | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib） | ✅ v3.3.1 |
-| A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
-| A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
-| A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 先 `gen:api` 再 `tsc`） | ✅ v3.4.2 |
-| 部署回归 | nginx `log_format` 写在 `server` 内 → 容器起不来；已加构建期 `nginx -t` | ✅ v3.4.1 |
-| 构建链根治 | `package-lock.json` 重生成（全平台 optional 条目）→ CI 恢复纯 `npm ci` | ✅ v3.4.3 |
-| 死资产清理 | 旧前后端独立镜像 Dockerfile / nginx.conf / `.dockerignore` 全删 | ✅ v3.4.3 |
+## 执行进度（截至 2026-11-08，v3.4.4）
+
+| 编号             | 项                                                              | 状态                 |
+| -------------- | -------------------------------------------------------------- | ------------------ |
+| A.2.1 / C.4.1  | `api/ops.py` 移除开发机硬编码路径                                        | ✅ v3.1.0           |
+| A.9.1          | CI 前置 quality 门禁（ruff + pytest）                                | ✅ v3.1.0           |
+| A.4.2 / C.4.5  | 下游步骤失败结构化写入 Fault 表                                            | ✅ v3.1.0           |
+| A.6.1          | 公网暴露风险声明（README §5.5）                                          | ✅ v3.1.0           |
+| A.3.2          | FIT 双依赖测试稳定性                                                   | ✅ 已确认非缺陷；CI 必装全量依赖 |
+| A.2.2 / C.4.5  | 调度依赖显式化 + 消除 services→orchestrator 层级倒置                        | ✅ v3.2.0           |
+| A.1.2 部分       | `daily_report.py` 拆分（725→625，负荷/ACWR 抽出）                       | ✅ v3.2.0           |
+| A.1.2 部分       | `plan_service.py` 拆分（733→约 430，上传/12周/上下文抽出）                   | ✅ v3.2.0           |
+| A.1.1 / A.10.1 | 分层约束与体量预算自动化（`test_architecture_layering.py`）                  | ✅ v3.2.0           |
+| A.1.2 / C.4.2  | `domain/verify.py` 拆分为 `verify/` 包（1016 行 → 9 模块，最大 298 行）     | ✅ v3.3.0           |
+| A.8.1          | 结构化日志：单点配置 + `task_id`/`date` 上下文注入 + 命名规范                     | ✅ v3.3.0           |
+| A.5.2          | 规则阈值校准：双规则集对照回放（`domain/calibration.py`）                       | ✅ v3.3.0 首版        |
+| A.5.2 剩余       | 校准结果接入「候选阈值外置为数据文件」                                            | ✅ v3.4.0           |
+| A.8.1 剩余       | 采集端（Nginx access log / 前端）统一 request_id                        | ✅ v3.4.0           |
+| A.1.2 前端       | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib）                | ✅ v3.3.1           |
+| A.9            | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程）                            | ✅ v3.3.1           |
+| A.1.2 前端       | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法）        | ✅ v3.3.2           |
+| A.9 剩余         | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 先 `gen:api` 再 `tsc`） | ✅ v3.4.2           |
+| 部署回归           | nginx `log_format` 写在 `server` 内 → 容器起不来；已加构建期 `nginx -t`      | ✅ v3.4.1           |
+| 构建链根治          | `package-lock.json` 重生成（全平台 optional 条目）→ CI 恢复纯 `npm ci`      | ✅ v3.4.3           |
+| 死资产清理          | 旧前后端独立镜像 Dockerfile / nginx.conf / `.dockerignore` 全删          | ✅ v3.4.3           |
+| A.9 收尾（训练）    | 训练详情契约纳入 OpenAPI：`response_model` + `training.ts` 派生             | ✅ v3.4.4           |
+| 数据可观测性         | FIT 明细缺失显式 `hr_data_state` 三态 + NAS 部署前自检                     | ✅ v3.4.4           |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
-| 项 | 问题 | 状态 |
-|---|---|---|
-| ACWR 窗口截断 | `DailyPage` 只取 21 天，而后端按 D−56 预热 → 历史日报 ACWR 不一致 | ✅ 改为 56 天同口径 |
-| 类型漂移 | `DailyReport` 缺 `strategy` / `algo_versions` 两个后端已有字段 | ✅ 已补齐 |
-| 缓存策略缺失 | 报告类 query 无 `staleTime`，切页必全量重请求 | ✅ 统一 60s |
+| 项         | 问题                                                    | 状态           |
+| --------- | ----------------------------------------------------- | ------------ |
+| ACWR 窗口截断 | `DailyPage` 只取 21 天，而后端按 D−56 预热 → 历史日报 ACWR 不一致      | ✅ 改为 56 天同口径 |
+| 类型漂移      | `DailyReport` 缺 `strategy` / `algo_versions` 两个后端已有字段 | ✅ 已补齐        |
+| 缓存策略缺失    | 报告类 query 无 `staleTime`，切页必全量重请求                      | ✅ 统一 60s     |
 
 **v3.3.0 落地细节**：
 
-- **A.1.2 verify 拆分**：`verify/` 包按既有分节切为 `states` / `core` / `fingerprint` /
-  `result` / `channels` / `online` / `fields` / `raw` / `summary` 九个模块。
-  `__init__.py` 门面原样 re-export 旧单文件全部 **46 个公开符号**，
-  5 个测试文件 + 2 个脚本零改动。`__all__` 是必需的（否则 ruff F401 会删 re-export）。
-  `test_verify_package_facade.py` 以清单式断言锁定这 46 个符号。
+- **A.1.2 verify 拆分**：`verify/` 包按既有分节切为 `states` / `core` / `fingerprint` /  
+  `result` / `channels` / `online` / `fields` / `raw` / `summary` 九个模块。  
+  `__init__.py` 门面原样 re-export 旧单文件全部 **46 个公开符号**，  
+  5 个测试文件 + 2 个脚本零改动。`__all__` 是必需的（否则 ruff F401 会删 re-export）。  
+  `test_verify_package_facade.py` 以清单式断言锁定这 46 个符号。  
   体量预算白名单已清空，`domain/` 一并纳入预算检查。
-- **A.8.1 结构化日志**：新建 `app/logging_conf.py`（唯一 `basicConfig` 位置、`Settings.log_level`
-  真正生效、`log_context` 上下文管理器 + `ContextFilter`）。日志格式 `[task_id@date]`，
-  五个调度任务（daily / sleep_retry / weekly / monthly / tredict_sync）在入口包一层
-  `log_context`。logger 命名统一为 `hs.<子系统>.<模块>`，两层 AST 断言防止回退。
-  **踩坑记录**：`try: with log_context(...): ... except:` 时 `__exit__` 先跑、contextvar
-  已被 reset，在 `except` 里打的日志会丢 `task_id`——日志必须留在上下文块内。
-  **连带修掉的存量 bug**：`alembic` 的 `env.py` 调 `fileConfig()` 用了默认
-  `disable_existing_loggers=True`，会把进程内既有 logger 全置 `disabled`；迁移与应用
+- **A.8.1 结构化日志**：新建 `app/logging_conf.py`（唯一 `basicConfig` 位置、`Settings.log_level`  
+  真正生效、`log_context` 上下文管理器 + `ContextFilter`）。日志格式 `[task_id@date]`，  
+  五个调度任务（daily / sleep_retry / weekly / monthly / tredict_sync）在入口包一层  
+  `log_context`。logger 命名统一为 `hs.<子系统>.<模块>`，两层 AST 断言防止回退。  
+  **踩坑记录**：`try: with log_context(...): ... except:` 时 `__exit__` 先跑、contextvar  
+  已被 reset，在 `except` 里打的日志会丢 `task_id`——日志必须留在上下文块内。  
+  **连带修掉的存量 bug**：`alembic` 的 `env.py` 调 `fileConfig()` 用了默认  
+  `disable_existing_loggers=True`，会把进程内既有 logger 全置 `disabled`；迁移与应用  
   同进程跑时（测试、启动引导）此后 `hs.*` 日志静默消失。已显式传 `False` 并加契约测试。
-- **A.5.2 校准首版**：`strategy_replay` 是自一致性检验，回答不了「换阈值会怎样」；
-  且阈值是 import 时烧死在 `rule_registry` 模块常量里的，`RULES` 是全局单例。
-  为此给 `judge_priority` 加了可选 `specs` 参数（默认 `None` = 当前规则，行为不变），
-  `domain/calibration.py` 用「当前规则集 vs 候选规则集」跑同一批历史数据，
-  输出逐日差异与优先级迁移矩阵。CLI：`python -m app.domain.calibration_cli
-  --set P1-LOAD-HRV.acwr_high=1.45`。**只读**，不写库、不改全局规则、不产生策略版本。
+- **A.5.2 校准首版**：`strategy_replay` 是自一致性检验，回答不了「换阈值会怎样」；  
+  且阈值是 import 时烧死在 `rule_registry` 模块常量里的，`RULES` 是全局单例。  
+  为此给 `judge_priority` 加了可选 `specs` 参数（默认 `None` = 当前规则，行为不变），  
+  `domain/calibration.py` 用「当前规则集 vs 候选规则集」跑同一批历史数据，  
+  输出逐日差异与优先级迁移矩阵。CLI：`python -m app.domain.calibration_cli --set P1-LOAD-HRV.acwr_high=1.45`。**只读**，不写库、不改全局规则、不产生策略版本。
 
 **v3.3.1 落地细节（第二批 · 前端）**：
 
-- **DailyPage 拆分**：按「有没有状态」切，展示区块外提到
-  `components/reports/daily/`（Headline / Appendix / TrainingTable / Skeleton + format），
-  结论规则 `buildHeadline` 抽到 `lib/headline.ts`（纯函数）。
+- **DailyPage 拆分**：按「有没有状态」切，展示区块外提到  
+  `components/reports/daily/`（Headline / Appendix / TrainingTable / Skeleton + format），  
+  结论规则 `buildHeadline` 抽到 `lib/headline.ts`（纯函数）。  
   页面只留数据编排与交互状态，729 → 440 行，最大子模块 110 行。行为零变化。
-- **`gen:api` 修复**：原脚本直接打 `http://localhost:8000/openapi.json`，必须先起后端，
-  且失败只有 ECONNREFUSED。改为后端 `scripts/export_openapi.py` 离线导出
-  （`app.openapi()`，不连库，54 路径），前端 `scripts/gen-api.mjs` 串起导出→生成→清理，
+- **`gen:api` 修复**：原脚本直接打 `http://localhost:8000/openapi.json`，必须先起后端，  
+  且失败只有 ECONNREFUSED。改为后端 `scripts/export_openapi.py` 离线导出  
+  （`app.openapi()`，不连库，54 路径），前端 `scripts/gen-api.mjs` 串起导出→生成→清理，  
   并自动定位 `backend/.venv` 解释器。生成物按 `.gitignore` 忽略。
-- **清理**：`frontend/src.bak-20261022/`（198K，无引用）、27 个
+- **清理**：`frontend/src.bak-20261022/`（198K，无引用）、27 个  
   `vite.config.ts.timestamp-*.mjs`（vite 异常退出残留）——均未入库，仅本地磁盘。
 - **未做**：`WeeklyPlanPage.tsx`（757 行）单独立项，本轮不动。
 
 **v3.3.2 落地细节（第二批 · 前端，续）**：
 
-- **WeeklyPlanPage 拆分**：判据与 DailyPage 一致——「有没有状态」。页面只留数据编排与
-  交互状态（react-query hooks、mutation、拖动排序、日期切换、modal 开关），展示区块外提到
-  `components/plan/weekly/`：`format`(50) / `WeekHeader`(57) / `DayCard`(141) /
-  `SessionPrescription`(72) / `EvaluationPanel`(111) / `PlanActionBar`(69)。
+- **WeeklyPlanPage 拆分**：判据与 DailyPage 一致——「有没有状态」。页面只留数据编排与  
+  交互状态（react-query hooks、mutation、拖动排序、日期切换、modal 开关），展示区块外提到  
+  `components/plan/weekly/`：`format`(50) / `WeekHeader`(57) / `DayCard`(141) /  
+  `SessionPrescription`(72) / `EvaluationPanel`(111) / `PlanActionBar`(69)。  
   757 → 413 行，最大子模块 141 行。子组件一律 props 进、回调出，不自己发请求。
-- **行为零变化的验证方式**：提取拆分前后的中文字符串字面量集合做**双向 diff**。
-  原文件有而新代码缺失 4 条、新代码多出 19 条，逐条确认**全在注释里**，无用户可见文本变化。
+- **行为零变化的验证方式**：提取拆分前后的中文字符串字面量集合做**双向 diff**。  
+  原文件有而新代码缺失 4 条、新代码多出 19 条，逐条确认**全在注释里**，无用户可见文本变化。  
   辅以 `tsc --noEmit` 与 `build` 通过（`WeeklyPlanPage` 分包 15.79 kB / gzip 5.90 kB）。
-- **顺带修掉每次 render 重建**：`SessionPrescription` 的 `stepText` 提到组件外；
+- **顺带修掉每次 render 重建**：`SessionPrescription` 的 `stepText` 提到组件外；  
   `PlanActionBar` 的状态文案抽成 `statusText()`（原先三元嵌套在 JSX 里）。
-- **`schema.d.ts` 策略已定**：**构建时生成、不入库**（已写入 `.gitignore`）。
+- **`schema.d.ts` 策略已定**：**构建时生成、不入库**（已写入 `.gitignore`）。  
   `types.ts` 的迁移延后——迁移后 CI 必须先跑 `gen:api` 再做类型检查，否则类型文件不存在。
 
 **v3.4.0 落地细节（可观测性与配置收尾）**：
 
 - **A.8.1 采集端 request_id**：三段打通，链路 `浏览器 → Nginx → 后端日志`。
-  - Nginx：`map $http_x_request_id $hs_request_id { default $http_x_request_id; "" $request_id; }`
-    ——前端带了就透传，没带用内置 `$request_id` 生成，**进后端之前**的请求
+  - Nginx：`map $http_x_request_id $hs_request_id { default $http_x_request_id; "" $request_id; }`  
+    ——前端带了就透传，没带用内置 `$request_id` 生成，**进后端之前**的请求  
     （404、超时、静态资源）也有 ID。access log 换自定义格式带 `rid=`。
-  - 后端：`app/middleware/request_id.py`，**纯 ASGI 中间件**。刻意不用
-    `BaseHTTPMiddleware`——后者把下游放独立 task，contextvar 传播与同一条协程链
+  - 后端：`app/middleware/request_id.py`，**纯 ASGI 中间件**。刻意不用  
+    `BaseHTTPMiddleware`——后者把下游放独立 task，contextvar 传播与同一条协程链  
     不同，日志里拿不到 request_id 是最常见的症状。
-  - 非法入站值**丢弃重新生成**，不清洗（洗白后可能与上游撞车）。字符集
-    `[A-Za-z0-9._:-]{1,128}`：这个值要进日志（CRLF 注入）与响应头（控制字符会让
+  - 非法入站值**丢弃重新生成**，不清洗（洗白后可能与上游撞车）。字符集  
+    `[A-Za-z0-9._:-]{1,128}`：这个值要进日志（CRLF 注入）与响应头（控制字符会让  
     uvicorn 报错）。下游若也写了同名头，去重成**一个**且以中间件为准。
-  - access log 只打 `status>=400` 或 `>=500ms`：Nginx 已记全量，后端再记一遍是
+  - access log 只打 `status>=400` 或 `>=500ms`：Nginx 已记全量，后端再记一遍是  
     双份噪音，NAS 上 `docker logs` 长得很快。
-  - 前端 `ApiError` 新增 `requestId`，上报障时给这一个字符串即可对上日志。
-    **踩坑**：`crypto.randomUUID` 只在安全上下文（https/localhost）可用，NAS 内网
-    走 `http://192.168.2.2` 是**非安全上下文**，那里它是 `undefined`——必须降级到
+  - 前端 `ApiError` 新增 `requestId`，上报障时给这一个字符串即可对上日志。  
+    **踩坑**：`crypto.randomUUID` 只在安全上下文（https/localhost）可用，NAS 内网  
+    走 `http://192.168.2.2` 是**非安全上下文**，那里它是 `undefined`——必须降级到  
     `getRandomValues`。
-- **A.5.2 候选阈值外置**：`data/rule_thresholds.json`（或 `RULE_THRESHOLDS_FILE`）
+- **A.5.2 候选阈值外置**：`data/rule_thresholds.json`（或 `RULE_THRESHOLDS_FILE`）  
   可覆盖 `thresholds`，校准结论得以固化，不再需要改源码提交。
-  - **文件不存在 = 用默认值**（常态，不能因缺文件就挂）；**非法 = 抛错**，
+  - **文件不存在 = 用默认值**（常态，不能因缺文件就挂）；**非法 = 抛错**，  
     静默忽略会让人以为「调了但没效果」。
   - 只覆盖 `thresholds`，不碰 `condition` / `reason`——否则变成「配置文件里藏逻辑」。
-  - **`RULES` 保持不变**（它是「代码默认值」+ 校准基线）；生效规则走
+  - **`RULES` 保持不变**（它是「代码默认值」+ 校准基线）；生效规则走  
     `effective_rules()`，判定链路入口 `ordered_specs()` 已改读它。
-  - `calibrate` 的 baseline 缺省取生效值——运维眼里的「当前」是已上线覆盖值；
+  - `calibrate` 的 baseline 缺省取生效值——运维眼里的「当前」是已上线覆盖值；  
     要对照代码默认值需显式传 `baseline=rr.RULES`。
-  - CLI 新增 `--file`，与运行时同一套校验；`rule_thresholds.example.json` 有测试
+  - CLI 新增 `--file`，与运行时同一套校验；`rule_thresholds.example.json` 有测试  
     锁住「样例必须能通过校验」，避免照抄 example 在上线时炸。
 
 **v3.4.1 事故与修复（v3.4.0 致命回归）**：
 
-v3.4.0 上线即不可用：容器内 `nginx FATAL Exited too quickly`，
+v3.4.0 上线即不可用：容器内 `nginx FATAL Exited too quickly`，  
 `[emerg] "log_format" directive is not allowed here in /etc/nginx/conf.d/hs.conf:22`。
 
-- **根因**：为 access log 加 `rid=` 字段时，把 `log_format` 写进了 `server {}` 内。
-  `log_format` 只允许出现在 `http` 上下文；`conf.d/*.conf` 被 include 后，
+- **根因**：为 access log 加 `rid=` 字段时，把 `log_format` 写进了 `server {}` 内。  
+  `log_format` 只允许出现在 `http` 上下文；`conf.d/*.conf` 被 include 后，  
   一旦进入 `server {` 就是 server 上下文。
-- **为什么全绿却起不来**：CI 的 `build-and-push` 只**构建**镜像、从不**加载**配置；
+- **为什么全绿却起不来**：CI 的 `build-and-push` 只**构建**镜像、从不**加载**配置；  
   `npm run build`、`ruff`、`pytest` 都碰不到 nginx。**配置语法从未被执行过**。
-- **修法**：`map` / `log_format` 移到 `deploy/nginx.http.single.conf`，
-  由 server 文件首行 `include /etc/nginx/hs-http.conf;` 引入；
-  Dockerfile 增加 COPY 并在构建期跑 `nginx -t`。
-  `nginx -t` **只看输出里的 `[emerg]` / `[error]`，不看退出码**——Debian 的
-  `nginx.conf` 带 `user www-data;`，在非 root 或缺该用户的环境里会因无关原因
+- **修法**：`map` / `log_format` 移到 `deploy/nginx.http.single.conf`，  
+  由 server 文件首行 `include /etc/nginx/hs-http.conf;` 引入；  
+  Dockerfile 增加 COPY 并在构建期跑 `nginx -t`。  
+  `nginx -t` **只看输出里的 `[emerg]` / `[error]`，不看退出码**——Debian 的  
+  `nginx.conf` 带 `user www-data;`，在非 root 或缺该用户的环境里会因无关原因  
   返回非零，看退出码会把无害的环境差异变成构建失败。
-- **回归测试**（`test_deploy_config.py` 新增 6 条）：断言 http 级指令不在 `server {}` 内、
-  `$hs_request_id` 的 map 定义存在、server 文件 include 片段、Dockerfile COPY 到该路径并跑校验；
-  并有**反向自检**——用 v3.4.0 的原样错误配置喂给检测器，必须报出来。
+- **回归测试**（`test_deploy_config.py` 新增 6 条）：断言 http 级指令不在 `server {}` 内、  
+  `$hs_request_id` 的 map 定义存在、server 文件 include 片段、Dockerfile COPY 到该路径并跑校验；  
+  并有**反向自检**——用 v3.4.0 的原样错误配置喂给检测器，必须报出来。  
   没有反向自检时，「块里没有 log_format」可能只是解析器什么都没识别到（假绿）。
 
-> 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），
+> 明确不做的：**ECharts 体积优化**。已按需注册（`components/ui/echarts.ts`），  
 > 633 kB 基本无冗余，删组件只省 10-15 kB，收益不足以承担回归风险。
 
 > 状态说明：✅ = 已落地并有测试锁定；⬜ = 仍在待办。
@@ -239,9 +241,9 @@ tredict_cfg = Path(r"F:/WorkBuddy AI/Garmin_Tredict/_tools/tredict.config.json")
 
 **改进方向**：删除硬编码路径；统一以 `Settings` 中的 `garmin_tokenstore`、`tredict_token`（及 `tredict_ready`）为唯一真相源。插件引导若仍需要，改为可选配置项。
 
-**实际落地**：插件 session 分支与 `F:` 盘配置探测**整体删除**（不保留永远为 None 的配置项）。
-Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `settings.tredict_ready`。
-`HealthResponse` 形状不变。锁定测试：`tests/test_ops.py::test_health_source_has_no_hardcoded_dev_paths`
+**实际落地**：插件 session 分支与 `F:` 盘配置探测**整体删除**（不保留永远为 None 的配置项）。  
+Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `settings.tredict_ready`。  
+`HealthResponse` 形状不变。锁定测试：`tests/test_ops.py::test_health_source_has_no_hardcoded_dev_paths`  
 （源码级断言，防止路径再次混入）+ 3 条判定分支测试。
 
 **优先级**：P0（正确性与可移植性）。
@@ -289,9 +291,9 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 
 **影响**：干净环境或网络受限时 CI 不稳定。
 
-**复核结论（2026-11-07）**：在本机完整依赖环境下 `test_fit_parser.py + test_verify_engine.py`
-合跑 **65 passed**。`fitdecode` 与 `garmin-fit-sdk` 均在 `pyproject.toml` 硬依赖中
-（`dependencies` 而非 `optional-dependencies`），因此「干净环境失败」实为**评审环境依赖未装全**，
+**复核结论（2026-11-07）**：在本机完整依赖环境下 `test_fit_parser.py + test_verify_engine.py`  
+合跑 **65 passed**。`fitdecode` 与 `garmin-fit-sdk` 均在 `pyproject.toml` 硬依赖中  
+（`dependencies` 而非 `optional-dependencies`），因此「干净环境失败」实为**评审环境依赖未装全**，  
 不是仓库缺陷。不需要做降级策略或 `importorskip`——那会把真正的依赖缺失变成静默跳过。
 
 **改进方向**：CI 已按 A.9.1 安装全量依赖（`pip install -e "./backend[dev]"`），FIT 用例在 CI 中真实执行。
@@ -324,11 +326,11 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 
 **改进方向**：保留「不阻断」语义，但统一写入 `Fault` / 任务状态机，并产生可查询的 fault 记录（系统已有 fault 相关表与 API，应打通）。
 
-**实际落地**：新增 `_record_step_fault()`，四个步骤（analysis / plan / dingtalk / upload）失败时
-调用既有 `recovery_service.report_fault()` 登记，`kind=generalTech`（一般技术故障，不需人工确认）、
-`impact_scope=f"{step}@{date}"`、`fix_measures=f"{异常类型}: {消息}"`。
-登记本身失败只记 warning，**绝不阻断日任务**。
-`out["steps"]` 字符串格式保持不变（向后兼容既有消费方）。
+**实际落地**：新增 `_record_step_fault()`，四个步骤（analysis / plan / dingtalk / upload）失败时  
+调用既有 `recovery_service.report_fault()` 登记，`kind=generalTech`（一般技术故障，不需人工确认）、  
+`impact_scope=f"{step}@{date}"`、`fix_measures=f"{异常类型}: {消息}"`。  
+登记本身失败只记 warning，**绝不阻断日任务**。  
+`out["steps"]` 字符串格式保持不变（向后兼容既有消费方）。  
 锁定测试：`tests/test_scheduler_downstream_faults.py`（8 条，含「Fault 表写失败不影响流水线」与「全成功时零记录」）。
 
 **优先级**：P1 → 已关闭。
@@ -371,8 +373,8 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 
 **影响**：在内网/NAS 场景可接受；若暴露公网则风险极高（健康数据 + 可触发同步/写操作）。
 
-**实际落地**：README §5.5 增加醒目的「禁止将 18080 直接暴露到公网」警示块，说明后果
-（健康数据可读 + 同步/上传/故障恢复等写操作可被调用）与内网/VPN + 反代鉴权要求。
+**实际落地**：README §5.5 增加醒目的「禁止将 18080 直接暴露到公网」警示块，说明后果  
+（健康数据可读 + 同步/上传/故障恢复等写操作可被调用）与内网/VPN + 反代鉴权要求。  
 未引入应用层认证——那是与既有设计选择冲突的方案。
 
 **优先级**：P0（若公网暴露）；否则 P2。当前已通过文档声明处置。
@@ -429,13 +431,14 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 **改进方向**：在 CI 中跑完整 pytest（含 FIT 依赖）与前端 `npm run build`，作为镜像构建前置。
 
 **实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q`
-+ 前端 `gen:api` / `tsc` / `vite build`），`build-and-push` 声明 `needs: quality`，
-镜像构建**只消费** quality job 产出的 `frontend/dist` artifact。
-锁定测试：`tests/test_deploy_config.py`（`TestCiQualityGate` 7 条 + `TestLockPlatformCoverage`
-3 条 + `TestNoLegacyFrontendImage` 4 条 + `TestBuildArtifactHygiene` 2 条）：
-job 存在与依赖关系、Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、
-dist artifact 双向传递、lock 全平台条目与纯 `npm ci`、旧镜像资产不得复活、
-构建中间产物不得入库。
+
+- 前端 `gen:api` / `tsc` / `vite build`），`build-and-push` 声明 `needs: quality`，  
+  镜像构建**只消费** quality job 产出的 `frontend/dist` artifact。  
+  锁定测试：`tests/test_deploy_config.py`（`TestCiQualityGate` 7 条 + `TestLockPlatformCoverage`  
+  3 条 + `TestNoLegacyFrontendImage` 4 条 + `TestBuildArtifactHygiene` 2 条）：  
+  job 存在与依赖关系、Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、  
+  dist artifact 双向传递、lock 全平台条目与纯 `npm ci`、旧镜像资产不得复活、  
+  构建中间产物不得入库。
 
 **优先级**：P1 → 已关闭。
 
@@ -445,61 +448,105 @@ dist artifact 双向传递、lock 全平台条目与纯 `npm ci`、旧镜像资�
 
 **问题**：`types.ts` 曾手工维护 40+ interface。逐字段比对后发现两类漂移：
 
-1. **漏字段**（不会报错，只会让 `obj.field` 变成类型错误 → 开发者加 `as any` 绕过）：
-   `MonthlyReport.algo_versions` / `.strategy` / `.strategy_changes`、`WeeklyPlan.strategy`、
+1. **漏字段**（不会报错，只会让 `obj.field` 变成类型错误 → 开发者加 `as any` 绕过）：  
+   `MonthlyReport.algo_versions` / `.strategy` / `.strategy_changes`、`WeeklyPlan.strategy`、  
    `WeeklyReport.algo_versions`。
-2. **错字段**（类型说「有」，运行时拿到 `undefined`）：
-   `EnvironmentDaily`（字段全错，真实契约是 `EnvironmentResponse`）、
-   `LoadSeriesDay`（`load/acute/chronic/ratio` vs 真实 `total/by_sport/acwr/acwr_state`）、
+2. **错字段**（类型说「有」，运行时拿到 `undefined`）：  
+   `EnvironmentDaily`（字段全错，真实契约是 `EnvironmentResponse`）、  
+   `LoadSeriesDay`（`load/acute/chronic/ratio` vs 真实 `total/by_sport/acwr/acwr_state`）、  
    `SeriesResponse`（`{days}` vs 真实 `{metric, points}`）。
 
 **实际落地**：
 
-- `types.ts` 465 → 124 行，改为 `components['schemas']['X']` 派生；仅保留生成器表达不了的少量手写类型
+- `types.ts` 465 → 124 行，改为 `components['schemas']['X']` 派生；仅保留生成器表达不了的少量手写类型  
   （`TaskStatus` / `StrategyChange` / `FieldDiff` / `StrategyLink`）。
-- 后端补齐 5 处「内联成裸 `dict`」的契约（`LoadSeriesResponse` / `LoadSeriesDay` / `HrParamsView` /
-  `Plan12WeekItem` / `WeekPlanCard`），并把 `WeeklyPlan.evaluation` 从 `dict` 改成 `PlanEvaluation`。
-  收紧后立刻暴露两个真 bug：`plan_service._plan_payload` 把 `PlanEvaluation` 对象直接塞进 JSON 列
+- 后端补齐 5 处「内联成裸 `dict`」的契约（`LoadSeriesResponse` / `LoadSeriesDay` / `HrParamsView` /  
+  `Plan12WeekItem` / `WeekPlanCard`），并把 `WeeklyPlan.evaluation` 从 `dict` 改成 `PlanEvaluation`。  
+  收紧后立刻暴露两个真 bug：`plan_service._plan_payload` 把 `PlanEvaluation` 对象直接塞进 JSON 列  
   （`TypeError: not JSON serializable`）、`Plan12Week.weeks` 前端一直读到 `unknown`。
-- CI 顺序固定为 `npm ci → gen:api → tsc → vite build → 上传 dist artifact`；
-  `build-and-push` job 下载该 artifact 后只做 `COPY frontend/dist`，
+- CI 顺序固定为 `npm ci → gen:api → tsc → vite build → 上传 dist artifact`；  
+  `build-and-push` job 下载该 artifact 后只做 `COPY frontend/dist`，  
   `Dockerfile.single` 里**不再有任何 npm 指令**。
 
 **关于 CI 构建的三次失败（v3.4.2 落地过程中的主要成本）**：
 
-| 尝试 | 做法 | 结果 |
-| --- | --- | --- |
-| 1 | Dockerfile 里 `npm ci` + `npm run build`（Alpine） | 失败，只有 `exit code 1` |
-| 2 | 改 `npm install`（以为缺 musl 原生模块） | 仍失败 |
-| 3 | 前端构建移出 Dockerfile，交给 ubuntu runner | 仍失败，但**定位到** `vite build` 失败而 `tsc` 通过 |
+| 尝试 | 做法                                              | 结果                                     |
+| -- | ----------------------------------------------- | -------------------------------------- |
+| 1  | Dockerfile 里 `npm ci` + `npm run build`（Alpine） | 失败，只有 `exit code 1`                    |
+| 2  | 改 `npm install`（以为缺 musl 原生模块）                  | 仍失败                                    |
+| 3  | 前端构建移出 Dockerfile，交给 ubuntu runner              | 仍失败，但**定位到** `vite build` 失败而 `tsc` 通过 |
 
-**根因**：`package-lock.json` 的 `packages` 里**没有任何平台原生包条目**——
-连 win32 的都没有。`optionalDependencies` 声明里全平台都有（esbuild 23 个、
-rollup 27 个），但生成 lock 时没把条目写进 `packages`。`npm ci` 严格照 lock
-安装，于是任何平台都装不到原生二进制，`vite` 启动即
+**根因**：`package-lock.json` 的 `packages` 里**没有任何平台原生包条目**——  
+连 win32 的都没有。`optionalDependencies` 声明里全平台都有（esbuild 23 个、  
+rollup 27 个），但生成 lock 时没把条目写进 `packages`。`npm ci` 严格照 lock  
+安装，于是任何平台都装不到原生二进制，`vite` 启动即  
 `Cannot find module @rollup/rollup-linux-x64-gnu`。
 
-> v3.4.2 当时判断为「Windows 只记录当前平台」，实测更准确的说法是「一个都没
-> 解析」。本地能跑只是因为 `node_modules` 是历史 `npm install` 残留，并非 lock 有效
+> v3.4.2 当时判断为「Windows 只记录当前平台」，实测更准确的说法是「一个都没  
+> 解析」。本地能跑只是因为 `node_modules` 是历史 `npm install` 残留，并非 lock 有效  
 > ——本地 `npm ci` 同样会失败。
 
-**v3.4.2 的临时补丁（已拆除）**：`npm ci` 后补装两个平台包并钉死版本，
-由 `test_linux_native_pkgs_pinned_to_lock_versions` 锁版本一致。补丁能跑，
+**v3.4.2 的临时补丁（已拆除）**：`npm ci` 后补装两个平台包并钉死版本，  
+由 `test_linux_native_pkgs_pinned_to_lock_versions` 锁版本一致。补丁能跑，  
 但把「lock 不完整」这件事藏进了 CI，且版本号要手工跟随升级。
 
-**v3.4.3 根治**：删掉旧 lock，用 `npm install --package-lock-only` 全新解析。
-该命令只解析依赖元数据、不安装任何东西，npm 会把所有平台的 optional 依赖
-写进 lock v3 的 `packages`（带 `os` / `cpu` / `optional: true`）——
-**不需要 Linux 环境**，Windows 本机即可。注意在已有 lock 上跑该命令只会
+**v3.4.3 根治**：删掉旧 lock，用 `npm install --package-lock-only` 全新解析。  
+该命令只解析依赖元数据、不安装任何东西，npm 会把所有平台的 optional 依赖  
+写进 lock v3 的 `packages`（带 `os` / `cpu` / `optional: true`）——  
+**不需要 Linux 环境**，Windows 本机即可。注意在已有 lock 上跑该命令只会  
 回报 `up to date` 而不补条目，必须先删 lock。
 
-新 lock 含 49 个平台条目；CI 恢复纯 `npm ci`，两行补装与版本锁定测试删除，
-换成 `TestLockPlatformCoverage` 断言「lock 自足」。代价是全新解析顺带把
-27 个包升到 `^` 范围内最新版（rollup 4.64.6 → 4.68.0、react-query
-5.104.2 → 5.107.1、@babel/* 等），已由本地 `npm ci` + `tsc` + `vite build`
+新 lock 含 49 个平台条目；CI 恢复纯 `npm ci`，两行补装与版本锁定测试删除，  
+换成 `TestLockPlatformCoverage` 断言「lock 自足」。代价是全新解析顺带把  
+27 个包升到 `^` 范围内最新版（rollup 4.64.6 → 4.68.0、react-query  
+5.104.2 → 5.107.1、@babel/* 等），已由本地 `npm ci` + `tsc` + `vite build`  
 与 CI 双重验证。
 
 **优先级**：P2 → 已关闭。
+
+#### A.9.3 训练详情契约与「数据未同步」可观测性 ✅ v3.4.4
+
+**缘起**：NAS `v3.4.3` 单容器上，跑步详情的「心率区间」「时间—心率」两张图
+同时显示「本次无逐秒心率数据」占位（卡片还在，非渲染崩溃）。本机用真实数据
+复核全绿：2026-10-26 跑步 FIT 3863 条 `record` 全含 `heart_rate`，
+`hr_series` 3863 点、`hr_zones.counted_seconds=3580`，306 个活动零 `fit_jsonl`
+缺失，ECharts 版本未变，`template_of` 映射正常。根因锁定为 NAS 容器
+`data/raw/garmin/fit_jsonl/` 未随 `data/` 搬运——`nas_deploy_single.sh` 只
+`mkdir -p data/raw`，`.dockerignore` 排除 `data`，搬运从未发生。
+
+**三个真实代码缺陷（无论根因都值得加固）**：
+
+1. `storage/activity_source.py::load_fit_messages` 缺文件时静默返回裸 `{}`，
+   UI 无法区分「数据没同步」与「这次确实没心率」——正是用户困惑来源。
+2. `api/activities.py::get_detail` 无 `response_model`，OpenAPI 里响应是
+   `{[key: string]: unknown}`，`api/training.ts` 手抄 173 行 interface
+   （A.9 迁移的遗漏），后端加字段前端永远不知情。
+3. `tests/test_activities_api.py` fixture 不建 `fit_jsonl`、不断言两张图的字段
+   → 正路径从未被接口层覆盖（测试盲区）。
+
+**实际落地（TDD 垂直切片：storage → service → API 契约 → 前端 → 部署）**：
+
+- storage：`load_fit_messages` → `FitMessages(by_type, source)`，
+  `source` 为 `present` / `missing`，缺文件不再静默。
+- service：`_build_activity` 据 `source` 与 `hr_series` 计算 `hr_data_state`
+  三态（`ok` / `no_hr_samples` / `fit_missing`），写进详情响应。
+- 契约：`schemas/api.py` 注册 `CalendarResponse` / `DetailResponse` /
+  `ActivityDetail` 等模型，`/calendar` 与 `/detail` 加 `response_model`；
+  枚举字段用 `Literal`（`template` / `level` / `kind` / `hr_data_state`），
+  openapi-typescript 直接生成字面量联合而非 `string`。
+- 前端：`training.ts` 173 → 55 行，全部从 `schema.d.ts` 派生；两张图按
+  `hr_data_state` 显示不同占位文案（`fit_missing` 直接给出 NAS 补齐路径）。
+  派生后 optional 字段由组件 `?? []` 兜底，`useMemo` 依赖保持
+  `[stats]` / `[points]`，不新增 ECharts 引入、不引入 vitest。
+- 部署：`nas_deploy_single.sh` 启动前自检 `fit_jsonl/`，为空/缺失打印告警；
+  **只检查、不自动搬运**含个人健康信息的 raw（搬运命令写在 README §5.5）。
+- 测试接缝：`test_training_source.py`（storage 状态）、
+  `test_training_service.py`（三态）、`test_activities_api.py`（fixture 补
+  `fit_jsonl` + 正路径 + 缺文件 + OpenAPI 契约断言）、
+  `test_deploy_config.py::TestFitJsonlPreflight`（部署自检：在启动前、
+  告警点明影响、脚本不出现搬运指令）。前端靠 `gen:api` + `tsc` 把关。
+
+**优先级**：P1（用户可见故障）→ 已关闭。
 
 ---
 
@@ -678,7 +725,6 @@ sequenceDiagram
 | 接口调整 | `HealthResponse` 形状不变                      |
 | 迁移步骤 | 1) 删除硬编码 2) 单测构造 Settings 覆盖 3) 手动打 health |
 | 验证   | `tests/test_*` 中与 health 相关用例 + 手工 curl    |
-
 
 #### C.4.2 `backend/app/domain/verify.py`
 

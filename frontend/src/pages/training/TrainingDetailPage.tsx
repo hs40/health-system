@@ -140,8 +140,8 @@ function MuscleTable({ rows }: { rows: NonNullable<ActivityDetail['muscle_table'
                   {r.en}
                 </span>
               </td>
-              <td className="py-1.5">{r.primary_moves.join('、') || '—'}</td>
-              <td className="py-1.5">{r.secondary_moves.join('、') || '—'}</td>
+              <td className="py-1.5">{(r.primary_moves ?? []).join('、') || '—'}</td>
+              <td className="py-1.5">{(r.secondary_moves ?? []).join('、') || '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -180,22 +180,24 @@ function StrengthSection({ activity }: { activity: ActivityDetail }) {
 
 function SwimmingSection({ data }: { data: SwimmingData | undefined }) {
   if (!data) return null
+  const strokeTypes = data.stroke_types ?? []
+  const lengths = data.lengths ?? []
   const rows: MetricRow[] = [
     { label: '游泳距离', value: data.distance_m != null ? `${data.distance_m} m` : '—' },
     { label: '泳池长度', value: data.pool_length_m != null ? `${data.pool_length_m} m` : '—' },
     { label: '划水次数', value: data.strokes != null ? String(data.strokes) : '—' },
-    { label: '泳姿', value: data.stroke_types.length ? data.stroke_types.join('、') : '—' },
+    { label: '泳姿', value: strokeTypes.length ? strokeTypes.join('、') : '—' },
     { label: '平均 SWOLF', value: data.average_swolf != null ? String(data.average_swolf) : '—' },
   ]
   return (
     <section className="hs-card">
       <h2 className="hs-section-title mb-3">游泳专属指标</h2>
       <MetricsTable rows={rows} />
-      {data.lengths.length > 0 && (
+      {lengths.length > 0 && (
         <div className="mt-4">
           <h3 className="hs-label mb-2">分段时间</h3>
           <div className="flex flex-wrap gap-2">
-            {data.lengths.slice(0, 40).map((l, i) => (
+            {lengths.slice(0, 40).map((l, i) => (
               <span
                 key={i}
                 className="rounded-[var(--hs-r-sm)] border px-2 py-1 text-[var(--hs-fs-micro)]"
@@ -228,33 +230,33 @@ function DetailBody({ activity }: { activity: ActivityDetail }) {
   return (
     <div className="space-y-4">
       <Card title="训练指标">
-        <MetricsTable rows={activity.metrics} />
+        <MetricsTable rows={activity.metrics ?? []} />
       </Card>
 
       {cardio && (
         <>
           <Card title="心率区间">
-            <HrZoneChart stats={activity.hr_zones} />
+            <HrZoneChart stats={activity.hr_zones} state={activity.hr_data_state} />
             <HrZoneFootnote activity={activity} />
           </Card>
           <Card title="训练效果">
             <EffectView effect={activity.training_effect} />
           </Card>
           <Card title="时间—心率">
-            <HrSeriesChart points={activity.hr_series} />
+            <HrSeriesChart points={activity.hr_series ?? []} state={activity.hr_data_state} />
           </Card>
           <Card title="训练分段">
             {t === 'hiit' ? (
-              <HiitSegmentList segments={activity.segments} />
+              <HiitSegmentList segments={activity.segments ?? []} />
             ) : (
-              <LapSegmentTable segments={activity.segments} />
+              <LapSegmentTable segments={activity.segments ?? []} />
             )}
           </Card>
         </>
       )}
 
       {t === 'strength' && <StrengthSection activity={activity} />}
-      {t === 'swimming' && <SwimmingSection data={activity.swimming} />}
+      {t === 'swimming' && <SwimmingSection data={activity.swimming ?? undefined} />}
     </div>
   )
 }

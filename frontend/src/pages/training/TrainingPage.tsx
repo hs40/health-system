@@ -46,7 +46,7 @@ export default function TrainingPage() {
     if (!data) return []
     const [y, m] = ym.split('-').map(Number)
     const lead = (new Date(y, (m ?? 1) - 1, 1).getDay() + 6) % 7
-    return [...Array.from({ length: lead }, () => null), ...data.days]
+    return [...Array.from({ length: lead }, () => null), ...(data.days ?? [])]
   }, [data, ym])
 
   const [year, month] = ym.split('-').map(Number)
@@ -102,7 +102,7 @@ export default function TrainingPage() {
               onChange={(e) => setParam({ type: e.target.value })}
             >
               <option value="all">全部运动类型</option>
-              {data?.types.map((t) => (
+              {data?.types?.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
                 </option>
@@ -126,8 +126,9 @@ export default function TrainingPage() {
           ))}
           {cells.map((day, i) => {
             if (!day) return <div key={`e${i}`} />
+            const items = day.items ?? []
             const future = day.date > today
-            const clickable = !future && day.items.length > 0
+            const clickable = !future && items.length > 0
             return (
               <div
                 key={day.date}
@@ -144,7 +145,7 @@ export default function TrainingPage() {
                   disabled={!clickable}
                   className="text-[var(--hs-fs-micro)] font-semibold"
                   style={{ color: future ? 'var(--hs-ink-4)' : 'var(--hs-ink)' }}
-                  aria-label={`${day.date}，${day.items.length} 次训练`}
+                  aria-label={`${day.date}，${items.length} 次训练`}
                   onClick={(e) => {
                     e.stopPropagation()
                     if (clickable) goDetail(day.date, 1)
@@ -153,7 +154,7 @@ export default function TrainingPage() {
                   {Number(day.date.slice(8))}
                 </button>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {day.items.map((item) => (
+                  {items.map((item) => (
                     <button
                       key={item.activity_id}
                       type="button"
