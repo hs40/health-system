@@ -13,7 +13,8 @@ tests
 **/.pytest_cache
 **/*.egg-info
 frontend/node_modules
-frontend/dist
+# frontend/dist 不再排除：镜像改为直接 COPY 该目录（前端在 CI 里构建）。
+# 本地手动 build 镜像时，也需要先在 frontend/ 跑一次 npm run build。
 .env
 .env.local
 secrets/

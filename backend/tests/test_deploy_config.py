@@ -236,16 +236,34 @@ class TestCiQualityGate:
         text = self._workflow_text()
         assert "pytest" in text, "quality job 未运行 pytest"
 
-    def test_dockerfile_runs_frontend_build(self):
-        """前端类型检查由 Dockerfile.single stage 1 覆盖（tsc --noEmit + vite build）。
+    def test_frontend_built_in_ci_not_in_dockerfile(self):
+        """前端构建在 CI 里做，Dockerfile 只 COPY 产物（v3.4.7）。
 
-        quality job 不重复前端 build —— CI runner 与开发机的平台差异会导致
-        false negative 阻塞发版。Dockerfile 在 v3.0.0/v3.0.1 CI 中已验证可工作。
+        为什么不能放在 Dockerfile：`package-lock.json` 在 Windows 上生成，
+        npm 只记录当前平台的可选依赖，lock 里没有 `@rollup/rollup-linux-*`
+        与 `@esbuild/linux-*`。Alpine 上 `npm ci` 缺 musl 原生模块，
+        `vite build` 直接失败（v3.4.2/v3.4.3 连续两次 CI 挂在这）。
+
+        反向断言同样重要：Dockerfile 里再出现 npm/pnpm install 就是回归。
         """
+        workflow = self._workflow_text()
+        assert "npx vite build" in workflow, "quality job 未构建前端产物"
+        assert "fe-dist" in workflow, "前端产物 artifact 名称缺失"
+
         dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
-        assert "npm run build" in dockerfile, (
-            "Dockerfile.single stage 1 必须运行 npm run build（含 tsc --noEmit）"
-        )
+        # 只看指令行（顶格 RUN/CMD 等），跳过注释——注释里会提到这些命令
+        # 作为「为什么不能这么做」的说明，不该被误判。
+        directives = [
+            ln for ln in dockerfile.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        joined = "\n".join(directives)
+        for banned in ("npm install", "npm ci", "npm run build"):
+            assert banned not in joined, (
+                f"Dockerfile 指令里又出现了 `{banned}` —— 镜像构建不该碰 npm，"
+                "lock 的平台差异会让它在 Alpine 上失败"
+            )
+        assert "COPY frontend/dist" in joined, "Dockerfile 未 COPY 前端产物"
 
     def test_quality_generates_api_types_before_typecheck(self):
         """A.9：`schema.d.ts` 不入库，必须先 gen:api 再 tsc。
@@ -260,23 +278,16 @@ class TestCiQualityGate:
         assert tsc_at != -1, "quality job 未运行前端 tsc --noEmit"
         assert gen_at < tsc_at, "gen:api 必须排在 tsc 之前，否则类型文件还没生成"
 
-    def test_schema_artifact_passed_to_build_job(self):
-        """镜像构建阶段没有 Python，拿不到 OpenAPI。
+    def test_dist_artifact_passed_to_build_job(self):
+        """前端产物必须从 quality job 传到 build job。
 
-        必须把 quality job 生成的 `schema.d.ts` 传给 build job，
-        否则要么 build 失败，要么悄悄用了别的类型。
+        构建在 ubuntu runner 上做，镜像里只 COPY dist——
+        两边用同一份产物，避免「测试的那份」与「发布的那份」不一致。
         """
         text = self._workflow_text()
-        assert "upload-artifact" in text, "quality job 未上传 schema artifact"
-        assert "download-artifact" in text, "build job 未下载 schema artifact"
-        assert "api-schema" in text, "artifact 名称未对齐（上传/下载必须同名）"
-
-    def test_dockerfile_guards_missing_schema(self):
-        """缺少 schema.d.ts 时要在 Dockerfile 里显式失败，而不是让 tsc 报天书。"""
-        dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
-        assert "src/api/schema.d.ts" in dockerfile, (
-            "Dockerfile 缺少 schema.d.ts 存在性检查：忘了 gen:api 时会以晦涩的 tsc 报错失败"
-        )
+        assert "upload-artifact" in text, "quality job 未上传产物 artifact"
+        assert "download-artifact" in text, "build job 未下载产物 artifact"
+        assert "path: frontend/dist" in text, "dist artifact 路径未对齐"
 
 
 # ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
