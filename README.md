@@ -522,13 +522,18 @@ health-system/
     `@esbuild/linux-x64` 条目，`npm ci` 永远不会装它们。CI 改为 `npm ci` 后补装
     这两个包（版本与 lock 逐字一致，由测试把关）；前端构建整体前移到 quality job，
     Dockerfile 只剩 `COPY frontend/dist`，不再碰 npm。
+22. ~~`frontend/nginx.conf` / `Dockerfile` / `.dockerignore` 是旧三容器时代的前端独立镜像资产~~ →
+    三者一并删除。唯一引用 `nginx.conf` 的是同目录下那个 `Dockerfile` 的
+    `COPY nginx.conf`，compose 里早已没有 frontend 服务；现行单容器用
+    `deploy/Dockerfile.single` + `deploy/nginx.single.conf`，nginx 由 supervisord 托管。
+    这三个文件**不参与镜像构建**，删除对产物零影响，故未单独发版。
+    回归测试：`test_deploy_config.py::TestNoLegacyFrontendImage`。
 
 尚存：
 
 1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
    这是**依据等级**标注而非待办——阈值现在可通过数据文件校准，但「校准到多少」需真实数据支撑。
-2. `frontend/nginx.conf`（旧独立前端镜像的配置）已无引用，可择机删除。
-3. `package-lock.json` 没有全平台的 `optionalDependencies`。当前靠 CI 里那两行
+2. `package-lock.json` 没有全平台的 `optionalDependencies`。当前靠 CI 里那两行
    `npm install --no-save` 兜住，但它需要手工跟随 vite/rollup 升级。根治办法是在
    Linux 环境重跑一次 `npm install --package-lock-only`，让 lock 带上全平台条目——
    之后 CI 可恢复成纯 `npm ci`，那两行也能删。

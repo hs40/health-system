@@ -319,6 +319,62 @@ class TestCiQualityGate:
         )
 
 
+# ---------- 旧前端独立镜像资产不得复活（v3.4.2 清理） ----------
+
+
+class TestNoLegacyFrontendImage:
+    """三容器时代的前端独立镜像资产必须保持删除。
+
+    现行部署是单容器：`deploy/Dockerfile.single` 构建后端 + nginx + scheduler，
+    前端产物由 CI 生成、以 `frontend/dist` 形式 COPY 进去，nginx 由 supervisord
+    托管。旧时代 `frontend/Dockerfile`（node 构建 + nginx 托管 + 反代到
+    `http://backend:8000`）与之完全无关，且 `backend` 这个 service 名在单容器里
+    根本不存在。
+
+    这类死代码的真实风险不是「占空间」，而是**复活**：后续有人看到
+    `frontend/Dockerfile` 会以为它还能用，照着改配置，最终又拉起一套不一致的
+    反代。用户已明确要求清除旧部署方法，这里把它锁成断言。
+    """
+
+    LEGACY_FILES = (
+        "frontend/nginx.conf",
+        "frontend/Dockerfile",
+        "frontend/.dockerignore",
+    )
+
+    def test_legacy_frontend_image_files_are_gone(self):
+        for rel in self.LEGACY_FILES:
+            assert not (REPO_ROOT / rel).exists(), (
+                f"{rel} 又出现了 —— 旧前端独立镜像已废弃，"
+                "前端产物由 CI 构建后经 deploy/Dockerfile.single COPY 进单容器"
+            )
+
+    def test_no_compose_service_builds_frontend_image(self):
+        """compose 里不得有指向 frontend 构建上下文的 service。"""
+        for compose in REPO_ROOT.glob("docker-compose*.yml"):
+            content = compose.read_text(encoding="utf-8")
+            assert "frontend/Dockerfile" not in content, (
+                f"{compose.name} 仍在构建旧前端独立镜像"
+            )
+            assert "context: ./frontend" not in content, (
+                f"{compose.name} 仍以 frontend/ 作为构建上下文"
+            )
+
+    def test_no_dockerfile_in_frontend_dir(self):
+        """frontend/ 下不得再有 Dockerfile——前端不单独出镜像。
+
+        注意范围只看 frontend/：仓库里另有 `backend/Dockerfile`（路线 C 的
+        旧后端独立镜像）与 `deploy/Dockerfile.single`（现行）。前者同样是
+        三容器时代遗留，但不在本次清理范围内，单独评估。
+        """
+        frontend = REPO_ROOT / "frontend"
+        leftovers = [p.name for p in frontend.glob("Dockerfile*")]
+        assert leftovers == [], (
+            f"frontend/ 下又出现了 Dockerfile: {leftovers} —— "
+            "前端产物由 CI 构建后 COPY 进 deploy/Dockerfile.single，不单独出镜像"
+        )
+
+
 # ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
 
 
