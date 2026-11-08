@@ -130,10 +130,10 @@ export default function DataPage() {
   const markLines =
     b && !def.garminHrvBand
       ? [
-          ...(b.threshold_low !== null
+          ...(b.threshold_low != null
             ? [{ yAxis: def.scale ? b.threshold_low * def.scale : b.threshold_low, name: '阈值下' }]
             : []),
-          ...(b.threshold_high !== null
+          ...(b.threshold_high != null
             ? [{ yAxis: def.scale ? b.threshold_high * def.scale : b.threshold_high, name: '阈值上' }]
             : []),
         ]

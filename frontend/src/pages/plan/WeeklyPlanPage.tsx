@@ -70,12 +70,12 @@ export default function WeeklyPlanPage() {
     const weekChanged = baseline.current.week !== weekStart
     if (weekChanged) baseline.current = { week: weekStart, days: null }
     if (plan.data && !baseline.current.days) {
-      baseline.current.days = structuredClone(plan.data.days)
+      baseline.current.days = (plan.data.days ?? []).map((d) => ({ ...d }))
     }
     setOriginal(baseline.current.days)
 
     if (plan.data) {
-      setDays(structuredClone(plan.data.days))
+      setDays((plan.data.days ?? []).map((d) => ({ ...d })))
       setEvaluation(plan.data.evaluation ?? null)
     } else {
       setDays(null)
@@ -189,7 +189,7 @@ export default function WeeklyPlanPage() {
 
   const undoAll = () => {
     if (!original) return
-    const next = structuredClone(original)
+    const next = original.map((d) => ({ ...d }))
     setDays(next)
     history.current = []
     setDirty(true)
@@ -211,7 +211,7 @@ export default function WeeklyPlanPage() {
   const conflictsByDate = useMemo(() => {
     const map = new Map<string, ConflictMark>()
     for (const c of evaluation?.structured_conflicts ?? []) {
-      for (const d of c.days) {
+      for (const d of c.days ?? []) {
         const cur = map.get(d) ?? { hard: false, kinds: new Set<string>() }
         cur.hard = cur.hard || c.hard_block
         cur.kinds.add(c.kind)

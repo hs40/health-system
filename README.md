@@ -459,7 +459,7 @@ health-system/
 
 ### 9.3 已知技术债与指向
 
-详见 **[ARCHITECTURE\_REVIEW.md](./ARCHITECTURE_REVIEW.md)**，摘要（截至 2026-11-07）：
+详见 **[ARCHITECTURE\_REVIEW.md](./ARCHITECTURE_REVIEW.md)**，摘要（截至 2026-11-08）：
 
 已解决（v3.1.0）：
 
@@ -504,13 +504,25 @@ health-system/
 17. ~~校准结果无法固化，候选阈值只能改源码~~ → `data/rule_thresholds.json`
     覆盖生效，非法文件直接报错而非静默忽略；CLI `--file` 与运行时同一套校验（A.5.2 剩余）。
 
+已解决（v3.4.1，部署回归）：
+
+18. ~~nginx `log_format` 写进 `server {}`，容器起不来~~ → 拆分 `nginx.http.single.conf`
+    让 `map` / `log_format` 留在 `http` 上下文；构建期 `nginx -t` 把关（只看 `[emerg]`/`[error]`）。
+
+已解决（v3.4.2，类型契约）：
+
+19. ~~`types.ts` 手工维护 40+ interface，与后端契约漂移~~ → 改为
+    `components['schemas']['X']` 派生，465 → 124 行。比对发现 5 处漏字段、3 处字段名错误；
+    后端同时补齐 5 个裸 `dict` 契约（`LoadSeriesResponse` / `Plan12WeekItem` / `WeekPlanCard` 等）。
+    CI 顺序固定为 `gen:api → tsc`，`schema.d.ts` 以 artifact 传给镜像构建（A.9 剩余）。
+20. ~~`WeeklyPlan.evaluation` 是 `dict`，落库时把 pydantic 对象塞进 JSON 列~~ →
+    改为 `PlanEvaluation | None`，由 `_plan_payload` 显式 `model_dump`。
+
 尚存：
 
-1. 前端与后端错误契约可进一步自动化：当前 `types.ts` 仍手工维护，
-   `gen:api` 产出的 `schema.d.ts` 尚未接入类型层（A.9，P2）。
-   **策略已定**：`schema.d.ts` 构建时生成、不入库；迁移时 CI 需先跑 `gen:api` 再做类型检查。
-2. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
+1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
    这是**依据等级**标注而非待办——阈值现在可通过数据文件校准，但「校准到多少」需真实数据支撑。
+2. `frontend/nginx.conf`（旧独立前端镜像的配置）已无引用，可择机删除。
 
 ### 9.4 给 AI 编码代理
 

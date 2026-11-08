@@ -12,25 +12,17 @@ export function loadSeriesKey(from: string, to: string) {
   return ['load-series', from, to] as const
 }
 
-/** 图表消费的日视图（`LoadAcwrChart` 不读 `total`，保留以便未来复用）。 */
-export interface LoadDayView {
-  date: string
-  total: number
-  by_sport: Record<string, number>
-  acwr: number | null
-  acwr_state: string
-  [k: string]: unknown
-}
+/**
+ * 图表消费的日视图。
+ *
+ * 契约收紧后（v3.4.2 起 `LoadSeriesDay` 由后端 schema 派生）两者字段一致，
+ * 这里直接别名，避免再维护一份会漂移的镜像结构。
+ */
+export type LoadDayView = LoadSeriesDay
 
 /** `LoadSeriesResponse` → 图表日数组（三页共用，替代各自的 `map`）。 */
 export function toLoadDays(data: LoadSeriesResponse | undefined): LoadDayView[] {
-  return (data?.days ?? []).map((d) => ({
-    date: d.date,
-    total: d.total,
-    by_sport: d.by_sport,
-    acwr: d.acwr,
-    acwr_state: d.acwr_state,
-  }))
+  return data?.days ?? []
 }
 
 /** 按 `MM-DD`（图表 x 轴）找当天**原始**记录（弹窗用 `total` / `not_computable` / `acwr_note`）。 */

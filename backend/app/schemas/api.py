@@ -75,11 +75,31 @@ class MonthlyReport(BaseModel):
     algo_versions: dict[str, str] = Field(default_factory=dict)
 
 
+class Plan12WeekItem(BaseModel):
+    """12 周计划中的一周。
+
+    字段与 ``plan12w_service`` 的产出逐一对齐；此前它在 ``Plan12Week.weeks`` 里
+    是裸 ``dict``，前端拿到的全是 ``unknown``——契约没有描述，就只能靠猜。
+    """
+
+    week_index: int
+    week_start: date
+    week_end: date
+    phase: str  # base | build | peak | deload
+    focus: str
+    season: str
+    season_focus: str
+    # 长期优先级排序（cardio / fatLoss / muscleEndurance / maxStrength）
+    long_term_priority: list[str] = Field(default_factory=list)
+    target_load_factor: float
+    evaluation_due: bool = False
+
+
 class Plan12Week(BaseModel):
     """滚动 12 周计划（阶段 C）。"""
 
     start_date: date
-    weeks: list[dict] = Field(default_factory=list)
+    weeks: list[Plan12WeekItem] = Field(default_factory=list)
     goal_weights: dict[str, float] = Field(default_factory=dict)
     strategy: dict | None = None  # 生成时有效策略版本关联（T4.1，§11.1）
 
@@ -87,27 +107,6 @@ class Plan12Week(BaseModel):
 # ============================================================
 # 计划
 # ============================================================
-class WeeklyPlan(BaseModel):
-    week_start: date  # 周一
-    days: list[WeekPlanDay] = Field(default_factory=list)
-    status: str = "draft"  # draft | evaluated | confirmed
-    version: int = 1
-    strategy: dict | None = None  # 生成时有效策略版本关联（T4.1，§11.1）
-    # 周计划卡片标识（§12.3；2026-10-20 决策 Q10）：**读取时现算、不落库**。
-    # key = 日期 ISO；value = card_view() 输出（badge/is_adjusted/reason/
-    # report_ref/actual）。旧 payload 无此字段 → 空 dict，由接口现算填充。
-    cards: dict[str, dict] = Field(default_factory=dict)
-    # 最近一次 AI 评估结果（含结构化冲突与硬阻断标记）。读取时带出，
-    # 前端刷新后仍能看到"评估过/被阻断"的状态，不会误以为可确认。
-    evaluation: dict | None = None
-
-
-class WeeklyPlanGenerateRequest(BaseModel):
-    """生成周计划的入参（D18：夜班日由用户手动告知）。"""
-
-    night_shift_days: list[date] = Field(default_factory=list)
-
-
 class PlanConflict(BaseModel):
     """结构化冲突（2026-10-22）：可直接挂到日期卡片上，并区分能否阻断。
 
@@ -135,6 +134,44 @@ class PlanEvaluation(BaseModel):
     evaluated_at: datetime
 
 
+class WeekPlanCard(BaseModel):
+    """周计划卡片视图（§12.3）：原安排 / 调整后 / 原因 / 日报引用 / 实际。
+
+    结构对应 ``domain.adjustment.card_view()``；此前是裸 ``dict``，
+    前端只能拿到 ``{[k: string]: unknown}``。
+    """
+
+    date: date
+    original: str | None = None
+    adjusted: str | None = None
+    is_adjusted: bool = False
+    badge: str | None = None
+    reason: str | None = None
+    report_ref: str | None = None
+    actual: str | None = None
+
+
+class WeeklyPlan(BaseModel):
+    week_start: date  # 周一
+    days: list[WeekPlanDay] = Field(default_factory=list)
+    status: str = "draft"  # draft | evaluated | confirmed
+    version: int = 1
+    strategy: dict | None = None  # 生成时有效策略版本关联（T4.1，§11.1）
+    # 周计划卡片标识（§12.3；2026-10-20 决策 Q10）：**读取时现算、不落库**。
+    # key = 日期 ISO；value = card_view() 输出（badge/is_adjusted/reason/
+    # report_ref/actual）。旧 payload 无此字段 → 空 dict，由接口现算填充。
+    cards: dict[str, WeekPlanCard] = Field(default_factory=dict)
+    # 最近一次 AI 评估结果（含结构化冲突与硬阻断标记）。读取时带出，
+    # 前端刷新后仍能看到"评估过/被阻断"的状态，不会误以为可确认。
+    evaluation: PlanEvaluation | None = None
+
+
+class WeeklyPlanGenerateRequest(BaseModel):
+    """生成周计划的入参（D18：夜班日由用户手动告知）。"""
+
+    night_shift_days: list[date] = Field(default_factory=list)
+
+
 class UploadResult(BaseModel):
     session_id: str
     # uploaded | scheduled | unknown | failed | skipped | blocked（blocked=E25 恢复日禁止上传）
@@ -155,6 +192,65 @@ class SeriesPoint(BaseModel):
 class SeriesResponse(BaseModel):
     metric: str
     points: list[SeriesPoint] = Field(default_factory=list)
+
+
+class HrZone(BaseModel):
+    name: str
+    low_pct: float
+    high_pct: float
+    low_bpm: int
+    high_bpm: int
+
+
+class HrParamsView(BaseModel):
+    """当日生效的心率参数（Karvonen 五区），图表图例与日报共用同一份口径。"""
+
+    max_hr: int
+    rest_hr: int
+    method: str
+    hrr: int
+    zones: list[HrZone] = Field(default_factory=list)
+
+
+class NotComputableItem(BaseModel):
+    """不可计算的活动（必需字段缺失）：保留了原因，不填 0、不静默丢弃（需求 4.5）。"""
+
+    activity_id: str
+    sport: str
+    raw: float = 0.0
+    score: float = 0.0
+    display: int | None = None
+    reference_load: float = 0.0
+    computed: bool = False
+    reason: str = ""
+    verification_status: str = ""
+    verification_note: str = ""
+
+
+class LoadSeriesDay(BaseModel):
+    """负荷序列的逐日点（需求 4.5 / 8.1）：堆叠柱 + ACWR 折线的最小单元。
+
+    无训练日也保留（``total=0``），保证 EWMA 不断轴；
+    ``acwr=None`` + ``acwr_state="not_available"`` 表示慢性负荷为 0，不伪造数值。
+    """
+
+    date: date
+    total: float
+    by_sport: dict[str, float] = Field(default_factory=dict)
+    acwr: float | None = None
+    acwr_state: str
+    acwr_note: str | None = None
+    not_computable: list[NotComputableItem] = Field(default_factory=list)
+    unverified_sports: dict[str, str] = Field(default_factory=dict)
+
+
+class LoadSeriesResponse(BaseModel):
+    start: date
+    end: date
+    days: list[LoadSeriesDay] = Field(default_factory=list)
+    hr_params: HrParamsView
+    reference_loads: dict[str, float] = Field(default_factory=dict)
+    algo_versions: dict[str, str] = Field(default_factory=dict)
 
 
 class StandardDetail(BaseModel):

@@ -83,8 +83,14 @@ def _plan_payload(plan: WeeklyPlan) -> dict:
         "status": plan.status,
         "version": plan.version,
         "strategy": plan.strategy,
-        # 最近一次评估随计划落库：刷新后仍能看到「已评估 / 被硬阻断」状态
-        "evaluation": plan.evaluation,
+        # 最近一次评估随计划落库：刷新后仍能看到「已评估 / 被硬阻断」状态。
+        # ``evaluation`` 在模型上是 ``PlanEvaluation``，落库前必须显式 dump，
+        # 否则 JSON 列会拿到 pydantic 对象直接报 not JSON serializable。
+        "evaluation": (
+            plan.evaluation.model_dump(mode="json")
+            if isinstance(plan.evaluation, PlanEvaluation)
+            else plan.evaluation
+        ),
     }
 
 

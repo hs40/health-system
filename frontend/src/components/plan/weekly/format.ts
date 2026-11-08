@@ -1,5 +1,14 @@
 /** 周计划卡片与处方共用的类型与文案格式化。 */
-import type { TrainingSessionBrief } from '../../../api/types'
+import type { TrainingSession } from '../../../api/types'
+
+/**
+ * 完整处方会话。
+ *
+ * 后端已把 ``TrainingSession`` 注册为独立 schema（v3.4.2），字段涵盖
+ * warmup/main/cooldown/strength/rationale/target_type/distance_m 等全部处方内容；
+ * 此前手写的 ``FullSession`` 是它的子集镜像，已删除以免再漂移。
+ */
+export type FullSession = TrainingSession
 
 /** 计划状态中文名（后端 status 枚举） */
 export const STATUS_LABEL: Record<string, string> = {
@@ -8,32 +17,15 @@ export const STATUS_LABEL: Record<string, string> = {
   confirmed: '已确认',
 }
 
-/** 需要完整处方的会话形态（后端 TrainingSession） */
-export interface FullSession extends TrainingSessionBrief {
-  warmup?: Record<string, unknown>[]
-  main?: Record<string, unknown>[]
-  cooldown?: Record<string, unknown>[]
-  strength?: {
-    exercise: string
-    sets: number
-    reps: number
-    load_kg?: number | null
-    rest_sec: number
-  }[]
-  rationale?: string | null
-  target_type?: string | null
-  distance_m?: number | null
-}
-
 /** 卡片「时长」文案 */
-export function durationText(s?: TrainingSessionBrief | null): string {
+export function durationText(s?: TrainingSession | null): string {
   if (!s?.duration_min) return '—'
   return `${s.duration_min} min`
 }
 
 /** 卡片「训练目标」文案：力量日不套用心率区间说法（否则出现「力量 · 目标 Z2 区间有氧」） */
-export function goalText(s: TrainingSessionBrief): string {
-  if (s.sport === 'strength' || s.sport === 'strength_training') return '力量与肌耐力（按组次）'
+export function goalText(s: TrainingSession): string {
+  if (s.sport === 'strength') return '力量与肌耐力（按组次）'
   return s.target_hr_zone ? `${s.target_hr_zone} 区间有氧` : '按处方执行'
 }
 

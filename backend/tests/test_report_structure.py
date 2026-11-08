@@ -244,4 +244,4 @@ def test_evaluation_persisted_with_plan(session, monkeypatch):
     latest = plan_service.latest_weekly_plan(session, WS)
     assert latest is not None
     assert latest.evaluation is not None
-    assert latest.evaluation["hard_block"] is True
+    assert latest.evaluation.hard_block is True

@@ -63,7 +63,7 @@ export default function Plan12wPage() {
         </h1>
         {d && (
           <span className="text-[var(--hs-fs-micro)]" style={{ color: 'var(--hs-ink-4)' }}>
-            起点 {d.start_date}（周一） · 共 {d.weeks.length} 周 · 每 4 周评估
+            起点 {d.start_date}（周一） · 共 {(d.weeks ?? []).length} 周 · 每 4 周评估
             {version ? ` · 策略版本 ${version}` : ''}
           </span>
         )}
@@ -90,7 +90,7 @@ export default function Plan12wPage() {
         <>
           <Section title="目标权重" hint="训练资源分配权重；四项长期目标优先级固定为 心肺 → 减脂 → 肌肉耐力 → 最大力量">
             <div className="flex flex-wrap gap-x-6 gap-y-2">
-              {Object.entries(d.goal_weights).map(([k, v]) => (
+              {Object.entries(d.goal_weights ?? {}).map(([k, v]) => (
                 <div key={k} className="flex items-baseline gap-1.5">
                   <span className="text-[var(--hs-fs-small)]" style={{ color: 'var(--hs-ink-3)' }}>
                     {GOAL_LABEL[k] ?? k}
@@ -127,7 +127,7 @@ export default function Plan12wPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {d.weeks.map((w) => {
+                  {(d.weeks ?? []).map((w) => {
                     const isCurrent = w.week_start === currentMonday
                     const open = openWeek === w.week_start
                     const phase = PHASE[w.phase] ?? { label: w.phase, tone: 'neutral' as const }

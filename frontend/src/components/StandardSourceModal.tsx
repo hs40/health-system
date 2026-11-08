@@ -90,7 +90,7 @@ export function StandardSourceModal({ day, onClose }: { day: string; onClose: ()
           <div>
             <div className="hs-label mb-2">标准层取值</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
-              {Object.entries(data.metrics).map(([key, value]) => (
+              {Object.entries(data.metrics ?? {}).map(([key, value]) => (
                 <div key={key} className="flex items-baseline justify-between gap-2 text-sm">
                   <span className="hs-text-3">{METRIC_LABELS[key] ?? key}</span>
                   <span className="font-medium hs-text-1">
@@ -106,13 +106,13 @@ export function StandardSourceModal({ day, onClose }: { day: string; onClose: ()
 
           <div>
             <div className="hs-label mb-2">
-              原始出处（{data.source_refs.length} 个文件 · 相对 data/raw 的路径）
+              原始出处（{(data.source_refs ?? []).length} 个文件 · 相对 data/raw 的路径）
             </div>
-            {data.source_refs.length === 0 ? (
+            {(data.source_refs ?? []).length === 0 ? (
               <p className="text-sm hs-text-3">该日未记录原始文件引用。</p>
             ) : (
               <ul className="space-y-1.5">
-                {data.source_refs.map((r) => (
+                {(data.source_refs ?? []).map((r) => (
                   <li
                     key={r.path}
                     className="rounded-lg border hs-bd hs-bg-2 px-3 py-2 text-xs"

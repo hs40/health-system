@@ -131,14 +131,14 @@ def test_generate_plan12w_structure(session):
     plan = plan_service.generate_plan12w(session, SETTINGS, start_date=dt.date(2026, 10, 14))
     assert plan.start_date == dt.date(2026, 10, 12)  # 对齐到周一
     assert len(plan.weeks) == 12
-    phases = [w["phase"] for w in plan.weeks]
+    phases = [w.phase for w in plan.weeks]
     assert phases[0] == "base"
     assert phases[3] == "deload"
     assert phases[4] == "build"
     assert phases[8] == "peak"
     assert phases[11] == "deload"
     # 每 4 周评估一次
-    assert [w["week_index"] for w in plan.weeks if w["evaluation_due"]] == [4, 8, 12]
+    assert [w.week_index for w in plan.weeks if w.evaluation_due] == [4, 8, 12]
     assert plan.goal_weights["endurance"] == 0.4
 
 
@@ -161,16 +161,16 @@ def test_plan12w_re_evaluates_season_per_week(session):
     """T2.7：12 周跨越换季 → 每周按其起始日重新评估季节。"""
     # 从 11 月中开始 → 跨入冬季（12 月）
     plan = plan_service.generate_plan12w(session, SETTINGS, start_date=dt.date(2026, 11, 16))
-    seasons = [w["season"] for w in plan.weeks]
+    seasons = [w.season for w in plan.weeks]
     assert "autumn" in seasons
     assert "winter" in seasons  # 12 月起进入冬季
-    assert all("season_focus" in w for w in plan.weeks)
-    assert all(w["long_term_priority"] for w in plan.weeks)
+    assert all(w.season_focus for w in plan.weeks)
+    assert all(w.long_term_priority for w in plan.weeks)
 
 
 def test_plan12w_winter_season_priority(session):
     """冬季长期优先级以肌耐力/力量为先（季节策略内容）。"""
     plan = plan_service.generate_plan12w(session, SETTINGS, start_date=dt.date(2026, 12, 7))
     first = plan.weeks[0]
-    assert first["season"] == "winter"
-    assert first["long_term_priority"][0] in ("muscleEndurance", "maxStrength")
+    assert first.season == "winter"
+    assert first.long_term_priority[0] in ("muscleEndurance", "maxStrength")

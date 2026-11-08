@@ -17,6 +17,7 @@ from app.errors import AppError
 from app.schemas.api import (
     Baseline,
     DataChangeRequest,
+    LoadSeriesResponse,
     SeriesPoint,
     SeriesResponse,
     StandardDetail,
@@ -162,12 +163,12 @@ SERIES_MAX_DAYS = 120
 SERIES_WARMUP_DAYS = 56
 
 
-@router.get("/load-series")
+@router.get("/load-series", response_model=LoadSeriesResponse)
 def get_load_series(
     start: date | None = Query(default=None, alias="from", description="起始日期（含）"),
     end: date | None = Query(default=None, alias="to", description="结束日期（含）"),
     session: Session = Depends(get_session),
-) -> dict:
+) -> LoadSeriesResponse:
     """图表数据：逐日堆叠柱（分运动负荷）+ ACWR 折线。
 
     口径（需求 4.5 / 8.1 / 8.3）：

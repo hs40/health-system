@@ -70,9 +70,9 @@ export function DailyAppendixSection({
             命中规则：{report.risk.triggered_rules.join('、')}
           </p>
         ) : null}
-        {(report.quality.conflicts as unknown[])?.length ? (
+        {(report.quality.conflicts ?? []).length ? (
           <p>
-            检出 {report.quality.conflicts.length} 项跨源冲突，已按来源优先级选源（不做平均）。
+            检出 {(report.quality.conflicts ?? []).length} 项跨源冲突，已按来源优先级选源（不做平均）。
           </p>
         ) : null}
       </Appendix>

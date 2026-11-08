@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-07，v3.4.1）
+## 执行进度（截至 2026-11-08，v3.4.2）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -26,7 +26,7 @@
 | A.1.2 前端 | `DailyPage.tsx` 729 → 440 行（展示区块外提 + 结论规则入 lib） | ✅ v3.3.1 |
 | A.9 | `gen:api` 改为后端离线导出 OpenAPI（不依赖后端进程） | ✅ v3.3.1 |
 | A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
-| A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 需先 `gen:api`） | ⬜ 待立项 |
+| A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 先 `gen:api` 再 `tsc`） | ✅ v3.4.2 |
 | 部署回归 | nginx `log_format` 写在 `server` 内 → 容器起不来；已加构建期 `nginx -t` | ✅ v3.4.1 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
@@ -426,11 +426,39 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 
 **改进方向**：在 CI 中跑完整 pytest（含 FIT 依赖）与前端 `npm run build`，作为镜像构建前置。
 
-**实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q` +
-`npm ci && npm run build`），`build-and-push` 声明 `needs: quality`。
-锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（5 条，校验 job 存在、依赖关系与三条命令）。
+**实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q`），
+`build-and-push` 声明 `needs: quality`。前端构建校验已下移到 Dockerfile stage 1
+（CI job 内跑 `npm run build` 会因平台差异误报，见 v3.3.x 记录）。
+锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（5 条，校验 job 存在与依赖关系）。
 
 **优先级**：P1 → 已关闭。
+
+#### A.9.2 前端类型由后端契约派生 ✅ v3.4.2
+
+**证据**：`frontend/src/api/types.ts`、`frontend/scripts/gen-api.mjs`、`frontend/src/api/schema.d.ts`（不入库）。
+
+**问题**：`types.ts` 曾手工维护 40+ interface。逐字段比对后发现两类漂移：
+
+1. **漏字段**（不会报错，只会让 `obj.field` 变成类型错误 → 开发者加 `as any` 绕过）：
+   `MonthlyReport.algo_versions` / `.strategy` / `.strategy_changes`、`WeeklyPlan.strategy`、
+   `WeeklyReport.algo_versions`。
+2. **错字段**（类型说「有」，运行时拿到 `undefined`）：
+   `EnvironmentDaily`（字段全错，真实契约是 `EnvironmentResponse`）、
+   `LoadSeriesDay`（`load/acute/chronic/ratio` vs 真实 `total/by_sport/acwr/acwr_state`）、
+   `SeriesResponse`（`{days}` vs 真实 `{metric, points}`）。
+
+**实际落地**：
+
+- `types.ts` 465 → 124 行，改为 `components['schemas']['X']` 派生；仅保留生成器表达不了的少量手写类型
+  （`TaskStatus` / `StrategyChange` / `FieldDiff` / `StrategyLink`）。
+- 后端补齐 5 处「内联成裸 `dict`」的契约（`LoadSeriesResponse` / `LoadSeriesDay` / `HrParamsView` /
+  `Plan12WeekItem` / `WeekPlanCard`），并把 `WeeklyPlan.evaluation` 从 `dict` 改成 `PlanEvaluation`。
+  收紧后立刻暴露两个真 bug：`plan_service._plan_payload` 把 `PlanEvaluation` 对象直接塞进 JSON 列
+  （`TypeError: not JSON serializable`）、`Plan12Week.weeks` 前端一直读到 `unknown`。
+- CI 顺序固定为 `npm ci → npm run gen:api → npx tsc --noEmit`，`schema.d.ts` 以 artifact 传给
+  build job，`Dockerfile.single` 加 `test -f src/api/schema.d.ts` 守卫。
+
+**优先级**：P2 → 已关闭。
 
 ---
 

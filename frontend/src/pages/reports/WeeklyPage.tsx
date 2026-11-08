@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
-import type { WeeklyReport } from '../../api/types'
+import type { StrategyChange, WeeklyReport } from '../../api/types'
 import { addDays, mondayOf, todayISO } from '../../lib/date'
 import { findLoadDay, toLoadDays } from '../../lib/loadSeries'
 import { sportLabel } from '../../lib/sports'
@@ -62,7 +62,7 @@ export default function WeeklyPage() {
   const planVs = (r?.plan_vs_actual ?? {}) as Record<string, unknown>
   const execution = (r?.execution ?? {}) as Record<string, unknown>
   const goals = goalsOf(r)
-  const changes = r?.strategy_changes ?? []
+  const changes: StrategyChange[] = (r?.strategy_changes ?? []) as StrategyChange[]
   const deltaPrev = (recovery['delta_vs_prev_week'] ?? {}) as Record<string, number | null>
 
   const days = useMemo(() => toLoadDays(series.data), [series.data])

@@ -126,7 +126,7 @@ export default function OpsPage({ embedded = false }: { embedded?: boolean }) {
                   </span>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {health.data.deps.map((d) => (
+                  {(health.data.deps ?? []).map((d) => (
                     <div
                       key={d.name}
                       className="flex items-center justify-between gap-2 rounded-lg border hs-bd hs-bg-2 px-3 py-2"

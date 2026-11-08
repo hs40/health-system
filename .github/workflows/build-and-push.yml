@@ -21,9 +21,11 @@ env:
 
 jobs:
   # 质量门禁：镜像构建的前置条件（ARCHITECTURE_REVIEW A.9.1）。
-  # ruff + pytest 任一失败 → build-and-push 不启动，杜绝「没跑测试也能发版」。
-  # 前端类型检查由 Dockerfile.single stage 1 的 `npm run build` 覆盖（含 tsc --noEmit），
-  # 不在 quality job 中重复——避免平台差异导致的 false negative 阻塞发版。
+  # ruff + pytest + 前端类型检查任一失败 → build-and-push 不启动。
+  #
+  # 前端类型检查必须**先 gen:api 再 tsc**（A.9）：
+  # `schema.d.ts` 不入库，类型是从后端 OpenAPI 现生成的。顺序错了会直接
+  # 「找不到模块」——这是刻意的，让「忘了生成」在构建期暴露。
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -49,6 +51,37 @@ jobs:
         run: python -m pytest tests/ -q
         working-directory: backend
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: frontend
+
+      - name: Generate API types from backend OpenAPI
+        # 用 quality job 已装好的解释器，避免再起一份 venv
+        run: npm run gen:api
+        working-directory: frontend
+        env:
+          HS_PYTHON: python
+
+      - name: Typecheck frontend
+        run: npx tsc --noEmit
+        working-directory: frontend
+
+      - name: Upload generated schema
+        # 镜像构建阶段没有 Python，拿不到 OpenAPI；把生成结果传下去复用，
+        # 保证「通过类型检查的那份类型」与「打进镜像的那份类型」完全一致。
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-schema
+          path: frontend/src/api/schema.d.ts
+          retention-days: 1
+
   build-and-push:
     needs: quality
     runs-on: ubuntu-latest
@@ -59,6 +92,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download generated schema
+        uses: actions/download-artifact@v4
+        with:
+          name: api-schema
+          path: frontend/src/api
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

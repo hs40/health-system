@@ -44,7 +44,7 @@ export default function LoadPage() {
   // 堆叠柱：按训练优先级排序（跑步最深、垫底），颜色深浅才有稳定含义
   const sports = useMemo(() => {
     const set = new Set<string>()
-    for (const d of days) Object.keys(d.by_sport).forEach((s) => set.add(s))
+    for (const d of days) Object.keys(d.by_sport ?? {}).forEach((s) => set.add(s))
     return [...set].sort((a, b) => sportRank(a) - sportRank(b) || a.localeCompare(b))
   }, [days])
 
@@ -59,7 +59,7 @@ export default function LoadPage() {
       borderWidth: 1,
     },
     emphasis: { focus: 'series' },
-    data: days.map((d) => d.by_sport[sport] ?? 0),
+    data: days.map((d) => d.by_sport?.[sport] ?? 0),
   }))
 
   // ACWR 折线：不可计算日留 null —— 断线，不连线、不补 0（需求 8.4）
@@ -281,8 +281,8 @@ export default function LoadPage() {
         <div className="grid gap-[var(--hs-gap-sm)] sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="今日 ACWR"
-            value={latest.acwr === null ? '—' : latest.acwr.toFixed(2)}
-            unit={latest.acwr === null ? '不可计算' : stateLabel(latest.acwr_state)}
+            value={latest.acwr == null ? '—' : latest.acwr.toFixed(2)}
+            unit={latest.acwr == null ? '不可计算' : stateLabel(latest.acwr_state)}
             size="md"
           />
           <Metric label="今日负荷" value={latest.total.toFixed(1)} unit="分" size="md" />
@@ -319,7 +319,7 @@ export default function LoadPage() {
           hint={`最大 ${hr.max_hr} · 静息 ${hr.rest_hr} · HRR ${hr.hrr} bpm`}
         >
           <div className="flex flex-wrap gap-2">
-            {hr.zones.map((z) => (
+            {(hr.zones ?? []).map((z) => (
               <div
                 key={z.name}
                 className="rounded-[var(--hs-r-sm)] border px-3 py-2"

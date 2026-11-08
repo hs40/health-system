@@ -192,7 +192,7 @@ function ToolButton({
 }
 
 function EnvDrawerBody() {
-  const env = useQuery<import('./api/types').EnvironmentDaily>({
+  const env = useQuery<import('./api/types').EnvironmentResponse>({
     queryKey: ['environment', 'today'],
     queryFn: () => {
       const d = new Date()

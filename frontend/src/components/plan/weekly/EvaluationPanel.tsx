@@ -51,9 +51,9 @@ export function EvaluationPanel({ evaluation }: { evaluation: PlanEvaluation }) 
         </div>
       </div>
 
-      {evaluation.structured_conflicts.length > 0 && (
+      {(evaluation.structured_conflicts ?? []).length > 0 && (
         <ul className="mb-3 space-y-1.5">
-          {evaluation.structured_conflicts.map((c, i) => (
+          {(evaluation.structured_conflicts ?? []).map((c, i) => (
             <li
               key={i}
               className="rounded-[var(--hs-r-sm)] border px-2.5 py-2 text-[var(--hs-fs-small)]"
@@ -75,9 +75,9 @@ export function EvaluationPanel({ evaluation }: { evaluation: PlanEvaluation }) 
                   {CONFLICT_KIND_LABEL[c.kind] ?? c.kind}
                 </Chip>
                 {c.hard_block && <Chip tone="p1">硬性阻断</Chip>}
-                {c.days.length > 0 && (
+                {(c.days ?? []).length > 0 && (
                   <span className="text-[var(--hs-fs-micro)]" style={{ color: 'var(--hs-ink-4)' }}>
-                    {c.days.map((d) => `${d.slice(5)}`).join(' / ')}
+                    {(c.days ?? []).map((d) => `${d.slice(5)}`).join(' / ')}
                   </span>
                 )}
                 {c.source === 'ai' && (
@@ -93,9 +93,9 @@ export function EvaluationPanel({ evaluation }: { evaluation: PlanEvaluation }) 
       )}
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <EvalList title="发现" items={evaluation.findings} />
-        <EvalList title="建议" items={evaluation.suggestions} />
-        <EvalList title="风险提示" items={evaluation.risk_notes} tone="p1" />
+        <EvalList title="发现" items={evaluation.findings ?? []} />
+        <EvalList title="建议" items={evaluation.suggestions ?? []} />
+        <EvalList title="风险提示" items={evaluation.risk_notes ?? []} tone="p1" />
       </div>
 
       {hardBlock && (

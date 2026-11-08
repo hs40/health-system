@@ -247,6 +247,37 @@ class TestCiQualityGate:
             "Dockerfile.single stage 1 必须运行 npm run build（含 tsc --noEmit）"
         )
 
+    def test_quality_generates_api_types_before_typecheck(self):
+        """A.9：`schema.d.ts` 不入库，必须先 gen:api 再 tsc。
+
+        顺序反了 tsc 会「找不到模块」。这条测试锁的是顺序，不是有无：
+        gen:api 出现过但排在 tsc 之后，等于没做。
+        """
+        text = self._workflow_text()
+        gen_at = text.find("npm run gen:api")
+        tsc_at = text.find("npx tsc --noEmit")
+        assert gen_at != -1, "quality job 未运行 npm run gen:api —— schema.d.ts 不入库，tsc 必失败"
+        assert tsc_at != -1, "quality job 未运行前端 tsc --noEmit"
+        assert gen_at < tsc_at, "gen:api 必须排在 tsc 之前，否则类型文件还没生成"
+
+    def test_schema_artifact_passed_to_build_job(self):
+        """镜像构建阶段没有 Python，拿不到 OpenAPI。
+
+        必须把 quality job 生成的 `schema.d.ts` 传给 build job，
+        否则要么 build 失败，要么悄悄用了别的类型。
+        """
+        text = self._workflow_text()
+        assert "upload-artifact" in text, "quality job 未上传 schema artifact"
+        assert "download-artifact" in text, "build job 未下载 schema artifact"
+        assert "api-schema" in text, "artifact 名称未对齐（上传/下载必须同名）"
+
+    def test_dockerfile_guards_missing_schema(self):
+        """缺少 schema.d.ts 时要在 Dockerfile 里显式失败，而不是让 tsc 报天书。"""
+        dockerfile = _read(REPO_ROOT / "deploy" / "Dockerfile.single")
+        assert "src/api/schema.d.ts" in dockerfile, (
+            "Dockerfile 缺少 schema.d.ts 存在性检查：忘了 gen:api 时会以晦涩的 tsc 报错失败"
+        )
+
 
 # ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
 

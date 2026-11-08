@@ -15,11 +15,17 @@
 # ============================================================
 
 # ---------- Stage 1：前端构建 ----------
+# 注意：`src/api/schema.d.ts` **不入库**，由后端 OpenAPI 生成（A.9）。
+# CI 在 quality job 里生成好之后，用 artifact 传到本 job 的
+# `frontend/src/api/schema.d.ts`，再 `COPY frontend/ ./` 带进构建上下文。
+# 这里**不能**跑 `npm run gen:api`——本 stage 没有 Python，生成不了。
 FROM node:22-alpine AS fe
 WORKDIR /fe
-COPY frontend/package.json ./
-RUN npm install --no-audit --no-fund
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+# schema.d.ts 必须已存在，否则 tsc 会「找不到模块」——这正是我们要的早期失败
+RUN test -f src/api/schema.d.ts || (echo "缺少 src/api/schema.d.ts：请先运行 npm run gen:api（CI 由 quality job 产出）" && exit 1)
 RUN npm run build
 
 # ---------- Stage 2：运行时 ----------
