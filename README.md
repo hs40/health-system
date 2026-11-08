@@ -264,6 +264,42 @@ HS_TAG=v3.1.0 bash nas_deploy_single.sh
 - 健康检查：`curl -fsS http://127.0.0.1:18080/api/ops/health`
 - 回滚：换 `HS_TAG` 再跑同一脚本（不动 `data/`）
 
+#### 发版必做：同步宿主部署脚本 `nas_deploy_single.sh`
+
+`nas_deploy_single.sh` 是 NAS 宿主 `/volume1/docker/health-system/` 下的**独立文件**：
+`Dockerfile.single` 不 `COPY` 它、CI 不推送它、compose 也不挂载它。`HS_TAG` 只切换
+镜像 tag，**不会更新这个脚本**。因此每次发版（至少在该脚本有变更时）都要先把仓库
+`deploy/nas_deploy_single.sh` 同步到宿主同名路径，再跑部署命令；否则宿主仍执行旧
+脚本，新版逻辑不会生效。
+
+> 同步的是**部署脚本（代码）**，与「容器自足拉取健康数据」不冲突：应用侧已无需
+> 人工搬运 `fit_jsonl/`（见下文），但脚本本身仍要随版本交付到宿主。
+
+**真实教训（v3.4.5）**：该版在脚本里新增「5.1 部署后立即触发一次逐秒心率明细补齐」，
+但发版只推了镜像、没同步宿主脚本 —— 宿主仍是旧版，5.1 不存在、当晚 23:30 又未到点，
+补齐从未运行，导致 2026-10-26 之后跑步详情页两张 HR 图升级后仍未恢复；同步脚本并
+手动触发一次 `fit_backfill` 后才恢复。
+
+同步与校验（开发机 → NAS，端口 222，账户 `hs40`）：
+
+```bash
+# 1. 备份宿主旧版
+ssh -p 222 hs40@192.168.2.2 \
+  'cp /volume1/docker/health-system/nas_deploy_single.sh \
+      /volume1/docker/health-system/nas_deploy_single.sh.bak'
+# 2. 同步新版并去掉 CRLF（避免 Windows 换行导致 bash 执行异常）
+tr -d '\r' < deploy/nas_deploy_single.sh | \
+  ssh -p 222 hs40@192.168.2.2 \
+  'cat > /volume1/docker/health-system/nas_deploy_single.sh'
+# 3. 远端校验语法 + 确认新版逻辑已在；再对比本地/远端 sha256sum 是否一致
+ssh -p 222 hs40@192.168.2.2 \
+  'bash -n /volume1/docker/health-system/nas_deploy_single.sh && \
+   grep -n fit_backfill /volume1/docker/health-system/nas_deploy_single.sh'
+```
+
+确认无误后再执行：
+`cd /volume1/docker/health-system && sudo HS_TAG=v3.4.5 bash nas_deploy_single.sh`。
+
 数据重灌与镜像发版分离，见 `scripts/pack_data.sh`。
 
 **逐秒心率明细由容器自足补齐（v3.4.5 起，不再人工搬运）**：

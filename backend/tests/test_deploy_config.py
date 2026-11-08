@@ -495,6 +495,33 @@ class TestPublicExposureWarning:
         )
 
 
+# ---------- 发版需同步宿主部署脚本（v3.4.5 事故回归） ----------
+
+
+class TestHostDeployScriptSyncDoc:
+    """nas_deploy_single.sh 是宿主独立文件，README 必须写明「发版要同步它」。
+
+    v3.4.5 的 5.1 立即补齐逻辑写进了仓库脚本，但脚本不进镜像、CI 不推送；
+    NAS 宿主仍是旧版，导致两图升级后未恢复。文档须明确这一交付步骤，
+    否则下次发版仍会只换 HS_TAG 而漏同步脚本。
+    """
+
+    def test_readme_states_script_is_not_in_image(self):
+        content = _read(REPO_ROOT / "README.md")
+        assert "不会更新这个脚本" in content, (
+            "README 未说明 HS_TAG 只切镜像 tag、不更新宿主 nas_deploy_single.sh"
+        )
+
+    def test_readme_has_sync_release_step(self):
+        content = _read(REPO_ROOT / "README.md")
+        assert "发版必做：同步宿主部署脚本" in content, (
+            "README 缺少「发版必做：同步宿主部署脚本」小节"
+        )
+        assert "deploy/nas_deploy_single.sh" in content, (
+            "同步步骤未指明仓库源文件 deploy/nas_deploy_single.sh"
+        )
+
+
 # ---------- nginx 配置上下文正确性（v3.4.0 事故回归） ----------
 
 
