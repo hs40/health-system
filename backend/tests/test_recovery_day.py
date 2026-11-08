@@ -15,6 +15,7 @@ from app.schemas.domain import (
     DataQualityReport,
     RiskAssessment,
     TrainingSession,
+    WeekPlanDay,
 )
 from app.schemas.enums import (
     DataState,
@@ -180,22 +181,24 @@ def test_p1_allows_recovery_day():
 # ---------------------------- 当日计划继承周计划强度目标（Q8-A 链路）----------------------------
 def _report_with_week_plan(zone: str | None) -> DailyReport:
     report = _report(rest=False)
+    # 用模型而非裸 dict：字段声明是 list[WeekPlanDay]，塞 dict 能过（pydantic
+    # 赋值不校验），但后续 model_dump 会报 PydanticSerializationUnexpectedValue。
     report.week_plan = [
-        {
-            "date": D.isoformat(),
-            "weekday": D.weekday(),
-            "session": {
-                "id": f"wp-{D.isoformat()}",
-                "date": D.isoformat(),
-                "sport": "running",
-                "name": "1006-有氧轻松跑 Z2 30min",
-                "target_hr_zone": zone,
-                "duration_min": 30,
-                "status": "confirmed",
-            },
-            "is_night_shift": False,
-            "note": None,
-        }
+        WeekPlanDay(
+            date=D,
+            weekday=D.weekday(),
+            session=TrainingSession(
+                id=f"wp-{D.isoformat()}",
+                date=D,
+                sport=Sport.RUNNING,
+                name="1006-有氧轻松跑 Z2 30min",
+                target_hr_zone=zone,
+                duration_min=30,
+                status="confirmed",
+            ),
+            is_night_shift=False,
+            note=None,
+        )
     ]
     return report
 
