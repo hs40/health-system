@@ -87,26 +87,23 @@ jobs:
       - name: Build frontend
         # 前端产物在这里产出，而不是在 Dockerfile 里。
         # 原因见 deploy/Dockerfile.single 头部：package-lock 是在 Windows 上生成的，
-        # npm 只记录当前平台的可选依赖，Alpine 上 `npm ci` 会缺 rollup/esbuild 的
-        # musl 原生模块。把构建固定在 ubuntu runner，镜像里就完全不需要 Node。
-        #
-        # 失败时把最后几十行打进 step summary + 注解：Actions 的普通日志
-        # 在无 admin token 时读不到，但这两处都能从 API 直接取。
-        run: |
-          set -o pipefail
-          npx vite build 2>&1 | tee /tmp/vite.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "## vite build 失败（最后 60 行）" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -60 /tmp/vite.log >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -15 /tmp/vite.log | while IFS= read -r line; do
-              [ -n "$line" ] && echo "::error title=vite build::${line}"
-            done
-          fi
-          exit "$status"
-        working-directory: frontend
+        # npm 只记录当前平台的可选依赖，镜像 stage 里装不全原生模块。
+        run: npx vite build > /tmp/vite.log 2>&1 || (cat /tmp/vite.log; exit 1)
+
+      - name: Upload build log on failure
+        # 失败时把完整日志上传成 artifact —— Actions 的普通日志在无 admin token 时
+        # 读不到，artifact 可以直接下载。
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vite-build-log
+          path: /tmp/vite.log
+          retention-days: 7
+
+      - name: Preserve build log
+        # 成功时也留着，便于对照（体积很小）；失败时由上一步上传
+        if: always()
+        run: cp /tmp/vite.log "$RUNNER_TEMP/vite.log" 2>/dev/null || true
 
       - name: Upload frontend dist
         uses: actions/upload-artifact@v4
