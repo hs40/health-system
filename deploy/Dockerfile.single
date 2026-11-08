@@ -15,15 +15,16 @@
 # ============================================================
 
 # ---------- 前端产物：由外部构建后拷入 ----------
-# 本镜像**不再**在前端 stage 里跑 npm。原因（v3.4.2 起三次 CI 失败换来）：
-#
-#   `package-lock.json` 在 Windows 上生成，npm 只记录**当前平台**的可选依赖，
-#   lock 里没有任何 `@rollup/rollup-linux-*` / `@esbuild/linux-*` 条目。
-#   于是 `npm ci` 在 Alpine 上缺 musl 原生模块，`vite build` 直接失败。
-#   而 `npm install` 会重解析依赖树，又和 quality job 的 `npm ci` 结果不一致。
-#
+# 本镜像**不再**在前端 stage 里跑 npm（v3.4.2 起三次 CI 失败换来）：
+#   python:3.12-slim 不该为了前端再装一套 Node；且把构建放在 quality job
+#   能让「过门禁的那份产物」与「发布的那份产物」严格相同。
 # 现在由 CI 在 ubuntu runner 上构建好 `frontend/dist`（与类型检查同一个
-# 环境、同一份 schema），作为 artifact 传进来。镜像构建因此完全不需要 Node。
+# 环境、同一份 schema），作为 artifact 传进来。
+#
+# 历史背景：早期 lock 的 `packages` 里没有任何平台原生包条目，镜像里的
+# Alpine/musl 装不全 vite 的原生模块。v3.4.3 已重新生成 lock 补齐全平台
+# 条目（见 ARCHITECTURE_REVIEW A.9.2）；但「镜像里不跑 npm」这个结构性决定
+# 保留——它与 lock 是否健康无关。
 #
 # 本地手动构建镜像时，需先自行产出前端产物：
 #   cd frontend && npm ci && npm run gen:api && npm run build

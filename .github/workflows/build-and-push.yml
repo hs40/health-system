@@ -28,7 +28,7 @@ jobs:
   # 「找不到模块」——这是刻意的，让「忘了生成」在构建期暴露。
   #
   # 前端**构建**也在这里做（v3.4.7）。Dockerfile 只 COPY 产物，不碰 npm：
-  # lock 在 Windows 生成，缺 Linux/Alpine 的原生模块，镜像 stage 里装不全。
+  # 同一份产物既过门禁又进镜像，且 python:3.12-slim 不该为前端再装一套 Node。
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -62,25 +62,18 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        # `npm ci` 严格照 lock 安装，能保证可复现；但 `package-lock.json` 是在
-        # Windows 上生成的，npm 只记录**当前平台**的可选依赖，lock 里没有
-        # `@rollup/rollup-linux-x64-gnu` / `@esbuild/linux-x64`。
-        # 结果是 `vite build` 报 "Cannot find module @rollup/rollup-linux-x64-gnu"。
+        # 纯 `npm ci`：package-lock.json 已含全平台 optionalDependencies 条目
+        # （v3.4.3 用 `npm install --package-lock-only` 全新解析生成）。
         #
-        # 所以分两步：先用 npm ci 还原 lock 里的一切，
-        # 再显式补上 Linux 平台的原生包（--no-save，不污染 lock）。
+        # 旧 lock 的 packages 里**一个平台包条目都没有**——连 win32 都没有，
+        # 于是 `npm ci` 在任何平台都装不到原生二进制，`vite build` 报
+        # "Cannot find module @rollup/rollup-linux-x64-gnu"。之前靠两行
+        # `npm install --no-save` 兜底并把版本号钉死；现在 lock 自足，补丁拆掉。
         #
-        # **必须带精确版本**：平台包与主包的版本是硬绑定（esbuild 0.21.5 ↔
-        # @esbuild/linux-x64 0.21.5）。不写版本号会装 latest，vite 加载时报
-        # "Host version X does not match binary version Y"。
-        # 版本来源：frontend/package-lock.json 里 node_modules/esbuild 与
-        # node_modules/rollup 的 version，升级这两个包时要同步改这里。
-        # backend/tests/test_deploy_config.py 会校验此处与 lock 一致。
-        run: |
-          npm ci --no-audit --no-fund
-          npm install --no-save --no-audit --no-fund \
-            @rollup/rollup-linux-x64-gnu@4.64.6 \
-            @esbuild/linux-x64@0.21.5
+        # 重生成有个坑：在**已有** lock 上跑 `npm install --package-lock-only`
+        # 只会回报 "up to date"，不会补条目。必须先删 lock 再全新解析。
+        # 校验：backend/tests/test_deploy_config.py::TestLockPlatformCoverage。
+        run: npm ci --no-audit --no-fund
         working-directory: frontend
 
       - name: Generate API types from backend OpenAPI
@@ -95,9 +88,9 @@ jobs:
         working-directory: frontend
 
       - name: Build frontend
-        # 前端产物在这里产出，而不是在 Dockerfile 里。
-        # 原因见 deploy/Dockerfile.single 头部：package-lock 是在 Windows 上生成的，
-        # npm 只记录当前平台的可选依赖，镜像 stage 里装不全原生模块。
+        # 前端产物在这里产出，而不是在 Dockerfile 里：同一份产物既过质量门禁
+        # 又被 COPY 进镜像，避免「测试的那份」与「发布的那份」不一致。
+        # 镜像里的 python:3.12-slim 也不该为了前端再装一套 Node。
         run: npx vite build
         working-directory: frontend
 

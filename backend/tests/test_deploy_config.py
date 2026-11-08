@@ -289,33 +289,77 @@ class TestCiQualityGate:
         assert "download-artifact" in text, "build job 未下载产物 artifact"
         assert "path: frontend/dist" in text, "dist artifact 路径未对齐"
 
-    def test_linux_native_pkgs_pinned_to_lock_versions(self):
-        """CI 补装的 Linux 原生包版本必须与 lock 里的主包版本一致。
 
-        背景：lock 在 Windows 上生成，没有 `@rollup/rollup-linux-x64-gnu` /
-        `@esbuild/linux-x64`，CI 要手动补。但这两个包的版本与 rollup / esbuild
-        **硬绑定**——装 latest 会得到 "Host version X does not match binary
-        version Y"。所以 workflow 里必须写死版本，且这个版本得跟着 lock 走。
 
-        这条测试是那条隐式约定的执行者：升级 vite / rollup 后忘了改 workflow，
-        CI 会以一种很难读的方式失败（vite 起不来），而不是在这里明确报错。
-        """
+# ---------- lock 必须自带全平台 optional 依赖（v3.4.3 根治） ----------
+
+
+class TestLockPlatformCoverage:
+    """``package-lock.json`` 必须包含 Linux x64 的原生二进制条目。
+
+    旧 lock 的 ``optionalDependencies`` 声明里全平台都有（esbuild 23 个、
+    rollup 27 个），但 ``packages`` 里**一个平台条目都没有** —— 连 win32 都没有。
+    ``npm ci`` 严格照 lock 安装，于是任何平台都装不到原生二进制，
+    ``vite build`` 报 ``Cannot find module @rollup/rollup-linux-x64-gnu``。
+    之前靠 CI 里两行 ``npm install --no-save`` 兜底、并把版本号钉死；
+    v3.4.3 用 ``npm install --package-lock-only`` 全新解析补齐条目，
+    CI 恢复纯 ``npm ci``。
+
+    这里锁的是「lock 自足」，不是「CI 会补」——后者是补丁，前者才是根治。
+    ``os`` / ``cpu`` / ``optional`` 三个字段也要在，否则 npm 不会按平台筛选。
+    """
+
+    @staticmethod
+    def _packages() -> dict:
         import json
 
-        lock_path = REPO_ROOT / "frontend" / "package-lock.json"
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        packages = lock.get("packages", {})
-        esbuild_ver = packages["node_modules/esbuild"]["version"]
-        rollup_ver = packages["node_modules/rollup"]["version"]
-
-        text = self._workflow_text()
-        assert f"@rollup/rollup-linux-x64-gnu@{rollup_ver}" in text, (
-            f"workflow 里补装的 @rollup/rollup-linux-x64-gnu 版本与 lock 中 "
-            f"rollup {rollup_ver} 不一致"
+        lock = json.loads(
+            (REPO_ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8")
         )
-        assert f"@esbuild/linux-x64@{esbuild_ver}" in text, (
-            f"workflow 里补装的 @esbuild/linux-x64 版本与 lock 中 "
-            f"esbuild {esbuild_ver} 不一致"
+        return lock.get("packages", {})
+
+    @staticmethod
+    def _workflow_text() -> str:
+        return _read(REPO_ROOT / ".github" / "workflows" / "build-and-push.yml")
+
+    def _assert_platform_entry(self, name: str) -> None:
+        entry = self._packages().get(f"node_modules/{name}")
+        assert entry is not None, (
+            f"lock 缺 {name} —— npm ci 在 Linux x64 上装不到原生二进制，"
+            "vite build 会失败"
+        )
+        assert entry.get("os") == ["linux"], f"{name} 缺 os: [linux]"
+        assert entry.get("cpu") == ["x64"], f"{name} 缺 cpu: [x64]"
+        assert entry.get("optional") is True, f"{name} 未标 optional: true"
+
+    def test_lock_contains_linux_x64_esbuild_binary(self):
+        esbuild_ver = self._packages()["node_modules/esbuild"]["version"]
+        self._assert_platform_entry("@esbuild/linux-x64")
+        assert self._packages()["node_modules/@esbuild/linux-x64"]["version"] == esbuild_ver, (
+            "@esbuild/linux-x64 版本必须与 esbuild 主包一致"
+        )
+
+    def test_lock_contains_linux_x64_rollup_binary(self):
+        rollup_ver = self._packages()["node_modules/rollup"]["version"]
+        self._assert_platform_entry("@rollup/rollup-linux-x64-gnu")
+        assert (
+            self._packages()["node_modules/@rollup/rollup-linux-x64-gnu"]["version"]
+            == rollup_ver
+        ), "@rollup/rollup-linux-x64-gnu 版本必须与 rollup 主包一致"
+
+    def test_workflow_uses_plain_npm_ci(self):
+        """lock 自足后，CI 不该再手工补装平台包。"""
+        # 只看指令行：注释里会提到这个命令作为「为什么不再需要」的说明，
+        # 不该被误判（v3.4.2 同类坑：反向断言误伤 Dockerfile 注释）。
+        directives = [
+            ln
+            for ln in self._workflow_text().splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        joined = "\n".join(directives)
+        assert "npm ci" in joined, "workflow 丢了 npm ci"
+        assert "npm install --no-save" not in joined, (
+            "workflow 仍在补装平台包 —— lock 已含全平台条目，纯 npm ci 即可"
         )
 
 
@@ -363,15 +407,68 @@ class TestNoLegacyFrontendImage:
     def test_no_dockerfile_in_frontend_dir(self):
         """frontend/ 下不得再有 Dockerfile——前端不单独出镜像。
 
-        注意范围只看 frontend/：仓库里另有 `backend/Dockerfile`（路线 C 的
-        旧后端独立镜像）与 `deploy/Dockerfile.single`（现行）。前者同样是
-        三容器时代遗留，但不在本次清理范围内，单独评估。
+        仓库里唯一的镜像定义是 `deploy/Dockerfile.single`；`backend/Dockerfile`
+        （路线 C 旧后端独立镜像）已于 v3.4.3 一并删除，见下条断言。
         """
         frontend = REPO_ROOT / "frontend"
         leftovers = [p.name for p in frontend.glob("Dockerfile*")]
         assert leftovers == [], (
             f"frontend/ 下又出现了 Dockerfile: {leftovers} —— "
             "前端产物由 CI 构建后 COPY 进 deploy/Dockerfile.single，不单独出镜像"
+        )
+
+    def test_backend_dockerfile_is_gone(self):
+        """路线 C 的旧后端独立镜像也已清理（v3.4.3）。
+
+        它同样没有任何活跃引用，且与 `frontend/Dockerfile` 是一对；
+        留着会让后来者以为「后端还能单独出镜像」。
+        """
+        assert not (REPO_ROOT / "backend" / "Dockerfile").exists(), (
+            "backend/Dockerfile（路线 C：全 Python 后端独立镜像）是三容器时代残留，"
+            "现行部署只用 deploy/Dockerfile.single"
+        )
+
+
+# ---------- 构建中间产物卫生（v3.4.3） ----------
+
+
+class TestBuildArtifactHygiene:
+    """vite 的临时配置文件不应残留在工作区，且必须被忽略。
+
+    vite 加载 `vite.config.ts` 时会先把它 bundle 成
+    `vite.config.ts.timestamp-*.mjs` 再 import，正常会立刻删除。本机
+    safe-delete hook 拦住了这次清理，于是每次 `vite build` 都留一个。
+    这些文件不入库（`*.timestamp-*.mjs` 已在 .gitignore），但会越堆越多，
+    且让人误以为是源码。
+
+    注意：这条测试只保证「仓库状态里没有」，不能阻止下次 build 再生——
+    那是 hook 与 vite 的交互，不在仓库层解决。
+    """
+
+    def test_no_vite_timestamp_files_tracked(self):
+        """vite 临时配置文件不得入库。
+
+        这里查 **git 索引**而不是文件系统：本机 safe-delete hook 会让它们在
+        每次 `vite build` 后再生，若断言「文件系统里没有」，任何人本地构建完
+        再跑测试都会假红。真正要守的是仓库状态——它们被 .gitignore 排除
+        （下一条断言），git 索引里也不该出现。
+        """
+        import subprocess
+
+        tracked = subprocess.run(
+            ["git", "ls-files", "frontend/vite.config.ts.timestamp-*.mjs"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        assert tracked == [], f"vite 临时配置文件被 git 跟踪: {tracked}"
+
+    def test_gitignore_ignores_vite_timestamp_files(self):
+        """保护性断言：规则本来就在，防止以后被顺手删掉。"""
+        content = _read(REPO_ROOT / ".gitignore")
+        assert "*.timestamp-*.mjs" in content, (
+            ".gitignore 未忽略 vite 临时配置文件，它们会被 git add -A 误入库"
         )
 
 

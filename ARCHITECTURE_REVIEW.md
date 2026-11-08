@@ -5,7 +5,7 @@
 
 ---
 
-## 执行进度（截至 2026-11-08，v3.4.2）
+## 执行进度（截至 2026-11-08，v3.4.3）
 
 | 编号 | 项 | 状态 |
 |---|---|---|
@@ -28,6 +28,8 @@
 | A.1.2 前端 | `WeeklyPlanPage.tsx` 757 → 413 行（展示区块外提，同 DailyPage 做法） | ✅ v3.3.2 |
 | A.9 剩余 | `types.ts` 迁移到 `schema.d.ts`（构建时生成、不入库；CI 先 `gen:api` 再 `tsc`） | ✅ v3.4.2 |
 | 部署回归 | nginx `log_format` 写在 `server` 内 → 容器起不来；已加构建期 `nginx -t` | ✅ v3.4.1 |
+| 构建链根治 | `package-lock.json` 重生成（全平台 optional 条目）→ CI 恢复纯 `npm ci` | ✅ v3.4.3 |
+| 死资产清理 | 旧前后端独立镜像 Dockerfile / nginx.conf / `.dockerignore` 全删 | ✅ v3.4.3 |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -429,9 +431,11 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 **实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q`
 + 前端 `gen:api` / `tsc` / `vite build`），`build-and-push` 声明 `needs: quality`，
 镜像构建**只消费** quality job 产出的 `frontend/dist` artifact。
-锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（8 条：job 存在与依赖关系、
-Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、dist artifact 双向传递、
-平台包版本与 lock 一致）。
+锁定测试：`tests/test_deploy_config.py`（`TestCiQualityGate` 7 条 + `TestLockPlatformCoverage`
+3 条 + `TestNoLegacyFrontendImage` 4 条 + `TestBuildArtifactHygiene` 2 条）：
+job 存在与依赖关系、Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、
+dist artifact 双向传递、lock 全平台条目与纯 `npm ci`、旧镜像资产不得复活、
+构建中间产物不得入库。
 
 **优先级**：P1 → 已关闭。
 
@@ -469,34 +473,31 @@ Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、dist artifact 双向传�
 | 2 | 改 `npm install`（以为缺 musl 原生模块） | 仍失败 |
 | 3 | 前端构建移出 Dockerfile，交给 ubuntu runner | 仍失败，但**定位到** `vite build` 失败而 `tsc` 通过 |
 
-**根因**：`package-lock.json` 在 Windows 上生成。npm 写 lock 时只记录**当前平台**的
-`optionalDependencies`，所以 lock 里根本没有 `@rollup/rollup-linux-x64-gnu` 和
-`@esbuild/linux-x64` 的条目。`npm ci` 严格照 lock 安装，这两个包永远不会被装上，
-`vite` 启动即 `Cannot find module @rollup/rollup-linux-x64-gnu`。
+**根因**：`package-lock.json` 的 `packages` 里**没有任何平台原生包条目**——
+连 win32 的都没有。`optionalDependencies` 声明里全平台都有（esbuild 23 个、
+rollup 27 个），但生成 lock 时没把条目写进 `packages`。`npm ci` 严格照 lock
+安装，于是任何平台都装不到原生二进制，`vite` 启动即
+`Cannot find module @rollup/rollup-linux-x64-gnu`。
 
-**最终修法**（`.github/workflows/build-and-push.yml`）：
+> v3.4.2 当时判断为「Windows 只记录当前平台」，实测更准确的说法是「一个都没
+> 解析」。本地能跑只是因为 `node_modules` 是历史 `npm install` 残留，并非 lock 有效
+> ——本地 `npm ci` 同样会失败。
 
-```yaml
-run: |
-  npm ci --no-audit --no-fund
-  npm install --no-save --no-audit --no-fund \
-    @rollup/rollup-linux-x64-gnu@4.64.6 \
-    @esbuild/linux-x64@0.21.5
-```
+**v3.4.2 的临时补丁（已拆除）**：`npm ci` 后补装两个平台包并钉死版本，
+由 `test_linux_native_pkgs_pinned_to_lock_versions` 锁版本一致。补丁能跑，
+但把「lock 不完整」这件事藏进了 CI，且版本号要手工跟随升级。
 
-两条约束都不可省：
+**v3.4.3 根治**：删掉旧 lock，用 `npm install --package-lock-only` 全新解析。
+该命令只解析依赖元数据、不安装任何东西，npm 会把所有平台的 optional 依赖
+写进 lock v3 的 `packages`（带 `os` / `cpu` / `optional: true`）——
+**不需要 Linux 环境**，Windows 本机即可。注意在已有 lock 上跑该命令只会
+回报 `up to date` 而不补条目，必须先删 lock。
 
-- **必须带精确版本**。平台包与主包硬绑定（`esbuild 0.21.5 ↔ @esbuild/linux-x64 0.21.5`），
-  装 latest 会得到 `Host version X does not match binary version Y`，比原来的错误更难读。
-- **必须 `--no-save`**。否则 `npm install` 会把 Linux 平台包写回 lock，
-  下次在 Windows 本地 `npm ci` 又会去装 linux 包。
-
-`tests/test_deploy_config.py::test_linux_native_pkgs_pinned_to_lock_versions` 读
-`package-lock.json` 断言 workflow 里的版本号与之逐字一致——升级 vite 后忘了同步，
-测试先红，而不是等 CI 用「vite 起不来」的方式报错。
-
-**根治待办**：在 Linux 环境重新生成一次 `package-lock.json`（见 README §9.3）。
-lock 里有了全平台条目后，这两行 `npm install` 就可以删掉，恢复纯 `npm ci`。
+新 lock 含 49 个平台条目；CI 恢复纯 `npm ci`，两行补装与版本锁定测试删除，
+换成 `TestLockPlatformCoverage` 断言「lock 自足」。代价是全新解析顺带把
+27 个包升到 `^` 范围内最新版（rollup 4.64.6 → 4.68.0、react-query
+5.104.2 → 5.107.1、@babel/* 等），已由本地 `npm ci` + `tsc` + `vite build`
+与 CI 双重验证。
 
 **优先级**：P2 → 已关闭。
 

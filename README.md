@@ -529,14 +529,31 @@ health-system/
     这三个文件**不参与镜像构建**，删除对产物零影响，故未单独发版。
     回归测试：`test_deploy_config.py::TestNoLegacyFrontendImage`。
 
+已解决（v3.4.3，构建链根治与死资产清理）：
+
+23. ~~`package-lock.json` 的 `packages` 里没有任何平台原生包条目~~ →
+    重新生成。旧 lock 的 `optionalDependencies` **声明**里全平台都有
+    （esbuild 23 个 / rollup 27 个），但 `packages` 里连 win32 的条目都没有
+    ——不是「Windows 只记录当前平台」，是压根没解析任何 optional 依赖。
+    `npm ci` 因此装不到原生二进制，`vite build` 报 `Cannot find module`。
+    修法：删掉旧 lock，用 `npm install --package-lock-only` **全新解析**
+    （只解析元数据、不安装，**不需要 Linux 环境**），得到 49 个带
+    `os` / `cpu` / `optional` 的全平台条目。CI 恢复纯 `npm ci`，
+    两行 `npm install --no-save` 补装与版本锁定测试一并删除。
+    代价：全新解析顺带把 27 个包升到 `^` 范围内最新版（rollup
+    4.64.6 → 4.68.0、react-query 5.104.2 → 5.107.1、@babel/* 等），
+    已用本地 `npm ci` + `tsc` + `vite build` 与 CI 双重验证。
+    回归测试：`TestLockPlatformCoverage`（锁「lock 自足」而非「CI 会补」）。
+24. ~~`backend/Dockerfile`（路线 C 旧后端独立镜像）与 4 个
+    `vite.config.ts.timestamp-*.mjs` 残留~~ → 前者 `git rm`，后者清理。
+    `.gitignore` 第 47 行**早已有** `*.timestamp-*.mjs` 规则，这些文件从未入库；
+    但 vite 把 `vite.config.ts` 编译成临时 `.mjs` 后的清理被 safe-delete hook
+    拦住，每次 build 都会再生——属本机现象，仓库层只保证「git 索引里没有」。
+
 尚存：
 
 1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
    这是**依据等级**标注而非待办——阈值现在可通过数据文件校准，但「校准到多少」需真实数据支撑。
-2. `package-lock.json` 没有全平台的 `optionalDependencies`。当前靠 CI 里那两行
-   `npm install --no-save` 兜住，但它需要手工跟随 vite/rollup 升级。根治办法是在
-   Linux 环境重跑一次 `npm install --package-lock-only`，让 lock 带上全平台条目——
-   之后 CI 可恢复成纯 `npm ci`，那两行也能删。
 
 ### 9.4 给 AI 编码代理
 
