@@ -36,6 +36,7 @@ from app.schemas.domain import StandardDaily
 from app.services.coach_service import analyze_daily, build_today_plan
 from app.services.daily_pipeline import generate_report, sync_daily
 from app.services.dingtalk_service import push_daily_report
+from app.services.fit_backfill import run_backfill
 from app.services.plan_service import generate_weekly_plan, upload_session
 from app.services.recovery_service import report_fault
 from app.services.report_service import analyze_monthly, generate_monthly, generate_weekly
@@ -242,6 +243,24 @@ def run_tredict_sync_job() -> dict:
         return {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
 
 
+def run_fit_backfill_job() -> dict:
+    """逐秒心率明细补齐任务（每日 23:30，v3.4.5）——容器内直接函数调用。
+
+    v3.4.4 之前 fit_jsonl 只能由本机 scripts 生成后人工搬到 NAS，容器镜像
+    不含 scripts、scheduler 也无解析 job，本机 daily 停跑后新活动永远缺明细。
+    本任务让容器自足；服务层负责只补空 / 幂等 / 失败隔离 / ledger / 告警，
+    本函数只做调度包装，绝不把异常抛穿调度器进程。
+    """
+    settings = get_settings()
+    try:
+        with log_context(task_id="fit_backfill", date=dt.date.today()):
+            return run_backfill(settings)
+    except Exception as e:  # noqa: BLE001 — 兜底，绝不崩调度器进程
+        with log_context(task_id="fit_backfill", date=dt.date.today()):
+            logger.error("逐秒心率补齐任务异常: %s", e)
+        return {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
+
+
 def run_monthly_job() -> dict:
     """月任务（阶段 C）：上月月报 + 长期目标偏离分析（TC.3）。"""
     settings = get_settings()
@@ -358,6 +377,13 @@ def build_scheduler() -> BackgroundScheduler:
         run_tredict_sync_job,
         _crontab_trigger(settings.tredict_sync_cron, settings.sched_tz),
         id="tredict_sync",
+        replace_existing=True,
+    )
+    # 逐秒心率明细补齐（v3.4.5）：23:30，避开 23:00 tredict_sync 的 Garmin 会话
+    sched.add_job(
+        run_fit_backfill_job,
+        _crontab_trigger(settings.fit_backfill_cron, settings.sched_tz),
+        id="fit_backfill",
         replace_existing=True,
     )
     return sched

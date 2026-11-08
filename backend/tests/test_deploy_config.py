@@ -615,13 +615,14 @@ class TestNginxConfigContext:
 class TestFitJsonlPreflight:
     """部署脚本必须在启动容器前自检 ``fit_jsonl/``，且只检查、不自动搬运。
 
-    v3.4.3 单容器上跑步详情页「心率区间」「时间—心率」两图同时空白：容器
-    只挂了 ``data/raw``，``fit_jsonl/`` 没搬过去；``load_fit_messages`` 当时
-    静默返回空 dict，前端只能显示「本次无逐秒心率数据」。部署脚本当时只
-    ``mkdir -p data/raw``，没有任何提示，运维完全看不出是数据没搬全。
+    v3.4.3 单容器上跑步详情页「心率区间」「时间—心率」两图同时空白：
+    ``load_fit_messages`` 当时静默返回空 dict，运维看不出是数据缺失还是
+    软件故障；部署脚本当时只 ``mkdir -p data/raw``，没有任何提示。
+    v3.4.4 加了 ``hr_data_state`` 三态与部署前自检，让缺失可自证。
 
-    自检必须给出可操作告警；但 raw 含个人健康信息，搬运须由人显式执行，
-    脚本不得自动 cp/rsync。
+    v3.4.5 起容器自足补齐（``app.services.fit_backfill`` 自动下载 .fit、
+    解析、写 gz），**运维脚本仍不搬运 raw**：含个人健康信息的搬运不是脚本
+    职责，脚本不得出现 cp/rsync/scp 指令（应用内按授权拉取是另一回事）。
     """
 
     @staticmethod

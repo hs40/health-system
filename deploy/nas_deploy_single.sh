@@ -83,21 +83,21 @@ mkdir -p data/raw data/db data/audit data/garmin_tokens
 log "2.1 FIT 逐秒明细自检"
 # 运动训练详情的「心率区间」「时间—心率」两张图只读
 # data/raw/garmin/fit_jsonl/<activity_id>.jsonl.gz，不读 activities/*.json。
-# 只挂 activities 而没有 fit_jsonl 时，两图会一起显示占位（v3.4.3 实测）。
-# raw 含个人健康信息，脚本只检查并告警，搬运必须由你在 NAS 上显式执行。
+# v3.4.5 起容器内置补齐能力：启动后自行从 Garmin 下载 .fit 并解析成 jsonl.gz，
+# 不再依赖本机 daily 任务 + 人工搬运（那正是 2026-10-26 之后缺明细的根因）。
+# 本脚本只检查并提示，绝不搬运 raw（含个人健康信息）；容器内应用按用户授权
+# 自行拉取，与运维脚本搬运是两回事。
 FIT_DIR="data/raw/garmin/fit_jsonl"
 FIT_COUNT=0
 if [ -d "$FIT_DIR" ]; then
   FIT_COUNT=$(find "$FIT_DIR" -type f -name '*.jsonl.gz' 2>/dev/null | wc -l | tr -d '[:space:]') || FIT_COUNT=0
 fi
 if [ "$FIT_COUNT" -eq 0 ]; then
-  echo "  [警告] $FIT_DIR 缺失或为空（0 个 *.jsonl.gz）。"
-  echo "     运动训练详情的「心率区间」「时间—心率」两张图需要逐秒心率明细，"
-  echo "     缺少时只会显示占位，且无法区分「数据未同步」与「本次无心率」。"
-  echo "     请把本机 data/raw/garmin/fit_jsonl/ 同步到 NAS 同名目录后重新打开详情页。"
-  echo "     本脚本不自动搬运：raw 含个人健康信息，搬运须由你显式执行。"
+  echo "  [提示] $FIT_DIR 缺失或为空（0 个 *.jsonl.gz）。"
+  echo "     运动训练详情的「心率区间」「时间—心率」两张图需要逐秒心率明细。"
+  echo "     容器将自动补齐缺失明细（v3.4.5），无需人工搬运，请稍后刷新详情页。"
 else
-  echo "  FIT 逐秒明细：$FIT_COUNT 个 *.jsonl.gz，两张心率图可读"
+  echo "  FIT 逐秒明细：$FIT_COUNT 个 *.jsonl.gz；容器将自动补齐缺失部分"
 fi
 
 log "3. 检查端口并清理旧容器"
@@ -144,6 +144,13 @@ if [ "$OK" = "1" ]; then
   echo "健康检查通过 ✅"
 else
   echo "健康检查未通过 ⚠️  请查看：$COMPOSE -f docker-compose.single.yml logs --tail=120"
+fi
+
+log "5.1 触发一次逐秒心率明细补齐（v3.4.5）"
+# 容器镜像内已有解析引擎与 Garmin 凭据；部署完立即补齐，不必等到当晚 23:30。
+# 失败不阻断部署：夜间调度 job 会重试，详情页会显示 fit_missing 便于排查。
+if ! "$DOCKER" exec hs-app python -m app.services.fit_backfill; then
+  echo "  [提示] 立即补齐未成功（不影响部署）；今晚 23:30 调度任务会自动重试。"
 fi
 
 log "6. 状态"

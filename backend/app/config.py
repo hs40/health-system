@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     # 替代原本地从开发机手动运行 daily_sync.py，NAS 容器内置调度。
     tredict_sync_cron: str = "0 23 * * *"  # 每日 23:00
 
+    # —— 逐秒心率明细补齐（v3.4.5）——
+    # 容器自己发现缺 fit_jsonl 的活动 → 下载 .fit → 解析 → 写 gz，
+    # 与本机 daily + 人工搬运解耦；23:30 避开 23:00 tredict_sync 的 Garmin 会话。
+    fit_backfill_cron: str = "30 23 * * *"  # 每日 23:30
+
     # —— 钉钉群机器人（日报推送，2026-10-26）——
     # webhook 为空 = 功能禁用（前端按钮显示但禁用；定时任务跳过推送）。
     dingtalk_webhook: str = ""

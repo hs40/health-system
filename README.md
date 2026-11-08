@@ -266,21 +266,31 @@ HS_TAG=v3.1.0 bash nas_deploy_single.sh
 
 数据重灌与镜像发版分离，见 `scripts/pack_data.sh`。
 
-**FIT 逐秒明细必须随 `data/` 一起搬**（运动训练详情两张心率图的唯一数据源）：
+**逐秒心率明细由容器自足补齐（v3.4.5 起，不再人工搬运）**：
 
-容器内 `RAW_DATA_DIR=/data/raw`，宿主卷是 `./data/raw:/data/raw`。部署脚本只
-`mkdir -p data/raw` 并**不搬运**数据（raw 含个人健康信息，搬运须显式执行）。
-若 NAS 上缺 `data/raw/garmin/fit_jsonl/`，跑步等有氧训练的「心率区间」
-「时间—心率」两图会只显示占位。从本机同步一次：
+运动训练详情「心率区间」「时间—心率」两图的唯一数据源是
+`data/raw/garmin/fit_jsonl/<activityId>.jsonl.gz`。历史上它由本机
+`backend/scripts/parse_fit.py` 生成后随 `data/` 人工搬到 NAS；但容器镜像只
+`COPY backend/app`（不含 `scripts/`）、scheduler 无解析 job，本机 daily 自
+2026-10-26 停跑后，NAS 每天新增的活动永远没有对应明细 —— 这是**持续性的
+架构缺口**，不是「一次搬运没做」。
 
-```bash
-# 在本机（Git Bash / WSL）执行；NAS SSH 端口 222
-scp -P 222 -r "data/raw/garmin/fit_jsonl" \
-  root@192.168.2.2:/volume1/docker/health-system/data/raw/garmin/
-```
+v3.4.5 起容器内 `app/services/fit_backfill.py` 自愈：
 
-`deploy/nas_deploy_single.sh` 启动前会自检该目录：为空/缺失时打印可操作告警，
-但**不阻断部署、不自动搬运**。补齐后刷新详情页即可，无需重建镜像。
+- 每天 `23:30`（`config.fit_backfill_cron`）扫描 `activities/*.json` 中缺
+  `fit_jsonl/<aid>.jsonl.gz` 的活动，按现有 Garmin 凭据下载 `.fit` → 复用镜像内
+  `app/parsers/fit.py` 解析 → append-only 写 `fit_jsonl/<aid>.jsonl.gz`；
+  只补空、幂等、单条失败不阻断其余。
+- 部署脚本在容器启动、健康检查通过后立即
+  `docker exec hs-app python -m app.services.fit_backfill` 触发一次，无需等到当晚。
+- 逐条失败写 `data/raw/garmin/_backfill_reports/<date>.json`，汇总进消息中心
+  （同日去重）；钉钉只在「整批失败 / Garmin 登录失效 / 连续 3 天仍有缺口」时报。
+- 已授权容器无人值守登录 Garmin 拉取个人健康数据（沿用现有凭据，不新增账号/密钥）；
+  运维部署脚本仍只建目录、不搬运含个人健康信息的 raw。
+
+`deploy/nas_deploy_single.sh` 启动前自检该目录，缺失时提示「容器将自动补齐」，
+不阻断部署、不自动搬运。补齐后刷新详情页即可，两图 `hr_data_state` 由
+`fit_missing` 变为 `ok`。
 
 > ⚠️ **禁止将 18080 直接暴露到公网**
 >
@@ -566,14 +576,14 @@ health-system/
     但 vite 把 `vite.config.ts` 编译成临时 `.mjs` 后的清理被 safe-delete hook
     拦住，每次 build 都会再生——属本机现象，仓库层只保证「git 索引里没有」。
 
-已解决（v3.4.4，跑步训练两张心率图空白）：
+已解决（v3.4.4，可观测性：两图空白不再无从判断）：
 
-25. ~~NAS 单容器缺 `fit_jsonl/`，两图只显示「本次无逐秒心率数据」~~ →
+25. ~~缺 `fit_jsonl` 时静默返回 `{}`，两图只显示「本次无逐秒心率数据」~~ →
     `load_fit_messages` 改为返回 `FitMessages(by_type, source)`，缺文件显式
     `source="missing"`；`activity_detail` 给出 `hr_data_state` 三态
     （`ok` / `no_hr_samples` / `fit_missing`），前端把「FIT 明细未同步」与
     「本次确实无逐秒心率」分开显示。两图共用同一 `record` 数据源，
-    以前一起空白时无从判断是数据没搬全还是软件故障。
+    以前一起空白时无从判断是数据没同步还是软件故障。
 26. ~~训练详情契约是裸 `dict`，`training.ts` 手抄 173 行 interface~~ →
     `/api/activities/detail` 与 `/calendar` 补 Pydantic `response_model`，
     `frontend/src/api/training.ts` 改为从 `schema.d.ts` 派生（A.9 收尾）。
@@ -582,6 +592,27 @@ health-system/
     `deploy/nas_deploy_single.sh` 启动前自检 `data/raw/garmin/fit_jsonl/`，
     为空/缺失打印可操作告警；只检查、不自动搬运健康数据。
     回归测试：`TestFitJsonlPreflight`（自检在启动前、告警点明影响、不出现搬运指令）。
+    （v3.4.5 起容器自动补齐，见下。）
+
+已解决（v3.4.5，逐秒心率明细持续缺失 —— 架构缺口根治）：
+
+28. ~~`fit_jsonl` 只由本机 `scripts/` 生成后人工搬到 NAS，容器不解析~~ →
+    根因不是「某次搬运没做」：容器镜像只 `COPY backend/app`（不含 `scripts/`）、
+    scheduler 六个 job 无解析任务，本机 daily 自 2026-10-26 停跑后，NAS 每天
+    新增活动必然 `fit_missing`。新增 `app/services/fit_backfill.py` 让容器自足：
+    发现缺失 → 按现有 Garmin 凭据下载 `.fit` → 复用镜像内 `app/parsers/fit.py`
+    解析 → append-only 写 `fit_jsonl/<aid>.jsonl.gz`（只补空、幂等、失败隔离）。
+29. ~~补齐只能等人工搬运或本机 daily~~ →
+    `config.fit_backfill_cron`（每日 23:30）注册独立 `fit_backfill` job；
+    部署脚本健康检查后 `docker exec` 立即触发一次 `python -m app.services.fit_backfill`。
+    回归测试：`test_fit_backfill.py` / `test_fit_backfill_job.py` /
+    `test_fit_backfill_deploy.py` 覆盖解析存储、只补空幂等、失败隔离、cron 注册、
+    部署触发在启动之后且不含搬运指令。
+30. ~~失败无留痕、告警会刷屏~~ →
+    逐条失败写 `data/raw/garmin/_backfill_reports/<date>.json`，汇总进消息中心
+    （同日 `ref_id` 去重）；钉钉只在「整批失败 / Garmin 登录失效 / 连续 3 天仍有缺口」
+    时报。`test_fit_backfill_alerts.py` 覆盖三种严重情形、静默情形，以及补齐后
+    `/api/activities/detail` 由 `fit_missing` → `ok` 的端到端回归。
 
 尚存：
 

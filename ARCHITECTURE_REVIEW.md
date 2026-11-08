@@ -6,7 +6,7 @@
 ---
 
 
-## 执行进度（截至 2026-11-08，v3.4.4）
+## 执行进度（截至 2026-11-08，v3.4.5）
 
 | 编号             | 项                                                              | 状态                 |
 | -------------- | -------------------------------------------------------------- | ------------------ |
@@ -33,6 +33,7 @@
 | 死资产清理          | 旧前后端独立镜像 Dockerfile / nginx.conf / `.dockerignore` 全删          | ✅ v3.4.3           |
 | A.9 收尾（训练）    | 训练详情契约纳入 OpenAPI：`response_model` + `training.ts` 派生             | ✅ v3.4.4           |
 | 数据可观测性         | FIT 明细缺失显式 `hr_data_state` 三态 + NAS 部署前自检                     | ✅ v3.4.4           |
+| 数据自愈（训练）      | 容器自足补齐 `fit_jsonl`：scheduler job + 部署即触发 + 失败告警/ledger        | ✅ v3.4.5           |
 
 **前端修复（v3.2.0，非本文档原有条目）**：
 
@@ -504,15 +505,21 @@ rollup 27 个），但生成 lock 时没把条目写进 `packages`。`npm ci` �
 
 **优先级**：P2 → 已关闭。
 
-#### A.9.3 训练详情契约与「数据未同步」可观测性 ✅ v3.4.4
+#### A.9.3 训练详情契约与「数据未同步」可观测性 ✅ v3.4.4（可观测性）/ v3.4.5（数据补齐）
 
 **缘起**：NAS `v3.4.3` 单容器上，跑步详情的「心率区间」「时间—心率」两张图
 同时显示「本次无逐秒心率数据」占位（卡片还在，非渲染崩溃）。本机用真实数据
 复核全绿：2026-10-26 跑步 FIT 3863 条 `record` 全含 `heart_rate`，
 `hr_series` 3863 点、`hr_zones.counted_seconds=3580`，306 个活动零 `fit_jsonl`
-缺失，ECharts 版本未变，`template_of` 映射正常。根因锁定为 NAS 容器
-`data/raw/garmin/fit_jsonl/` 未随 `data/` 搬运——`nas_deploy_single.sh` 只
-`mkdir -p data/raw`，`.dockerignore` 排除 `data`，搬运从未发生。
+缺失，ECharts 版本未变，`template_of` 映射正常。
+
+> **归因修正（v3.4.5）**：v3.4.4 曾把根因写成「`fit_jsonl/` 未随 `data/` 搬运」，
+> 但 NAS 实机复核显示该目录**非空**（含 ≥20 个 `*.jsonl.gz`）。真正根因是持续性
+> 架构缺口：`fit_jsonl` 历来由本机 `backend/scripts/parse_fit.py` 生成后人工搬运，
+> 而容器镜像只 `COPY backend/app`（不含 `scripts/`）、scheduler 无解析 job；本机
+> `data/logs/daily-last.json` 自 `2026-10-26T22:30:04` 停跑后，NAS 每天新增活动
+> 永远没有对应明细，故 `hr_data_state` 恒为 `fit_missing`。v3.4.4 只修好了「能自证」，
+> 数据补齐在 v3.4.5 才根治（见 A.9.4）。
 
 **三个真实代码缺陷（无论根因都值得加固）**：
 
@@ -539,14 +546,59 @@ rollup 27 个），但生成 lock 时没把条目写进 `packages`。`npm ci` �
   派生后 optional 字段由组件 `?? []` 兜底，`useMemo` 依赖保持
   `[stats]` / `[points]`，不新增 ECharts 引入、不引入 vitest。
 - 部署：`nas_deploy_single.sh` 启动前自检 `fit_jsonl/`，为空/缺失打印告警；
-  **只检查、不自动搬运**含个人健康信息的 raw（搬运命令写在 README §5.5）。
+  只检查、不自动搬运含个人健康信息的 raw（v3.4.5 起由容器自动补齐，见 A.9.4）。
 - 测试接缝：`test_training_source.py`（storage 状态）、
   `test_training_service.py`（三态）、`test_activities_api.py`（fixture 补
   `fit_jsonl` + 正路径 + 缺文件 + OpenAPI 契约断言）、
   `test_deploy_config.py::TestFitJsonlPreflight`（部署自检：在启动前、
   告警点明影响、脚本不出现搬运指令）。前端靠 `gen:api` + `tsc` 把关。
 
-**优先级**：P1（用户可见故障）→ 已关闭。
+**优先级**：P1（用户可见故障）→ 可观测性已关闭（v3.4.4）；数据补齐见 A.9.4（v3.4.5）。
+
+---
+
+#### A.9.4 逐秒心率明细容器自足补齐 ✅ v3.4.5
+
+**缘起**：承接 A.9.3 的归因修正 —— `fit_jsonl` 由本机 scripts 生成后人工搬运，
+容器自身不具备「下载 `.fit` → 解析 → 写 gz」的能力，只要本机 daily 停跑，
+NAS 新活动必然 `fit_missing`。一次搬运不能根治。
+
+**决策（grill-me Q1-Q5，用户确认）**：
+
+- Q1 = A 容器自足：app 内新增「逐秒心率补齐」服务 + scheduler job，不依赖本机链路；
+- Q2 = 是：授权容器无人值守登录 Garmin 拉取个人健康数据，沿用现有凭据；
+- Q3：新增独立 job 每日 23:30（`fit_backfill_cron`），部署后 `docker exec` 立即触发一次；
+- Q4：逐条失败写 ledger + 汇总进消息中心，钉钉只在整批失败 / 登录失效 /
+  连续 3 天仍有缺口时报，成功补齐不刷屏；
+- Q5：TDD 接缝 S1-S5 逐片红→绿。
+
+**落地（复用镜像内既有能力，不搬 `scripts/`）**：
+
+- `app/services/fit_backfill.py`：`write_parsed_fit`（append-only 写 gz）、
+  `missing_fit_ids`、`backfill_missing`（只补空、幂等、单条失败隔离并记录原因）、
+  `write_ledger` / `build_alert` / `dingtalk_reasons` / `_send_message_center` /
+  `_send_dingtalk`、`run_backfill(settings, *, fetcher, today)` 编排、`main()` CLI。
+- 解析引擎 `app/parsers/fit.py`（`parse_fit` / `write_jsonl_gz`）与依赖
+  `garmin-fit-sdk` / `fitdecode` 本就在镜像里；`.fit` 下载复用
+  `tredict_sync_service.default_fit_fetcher`；`_index.json` 对读取方非必需。
+- `config.py` 加 `fit_backfill_cron = "30 23 * * *"`；`scheduler.build_scheduler()`
+  注册 `id="fit_backfill"` 的 `run_fit_backfill_job()`，异常不抛穿调度器。
+- `deploy/nas_deploy_single.sh`：删除人工搬运提示，自检文案改为「容器将自动补齐」，
+  健康检查后 `docker exec hs-app python -m app.services.fit_backfill` 立即触发；
+  失败不阻断部署（夜间 job 重试）。脚本仍不含搬运指令。
+- 前端零改动（v3.4.4 三态文案已够），不引入 vitest / 不改 `useMemo`。
+
+**验证**：全量 pytest 1193 passed；`ruff check app/ scripts/ tests/` 全绿；
+`gen:api`（54 路径）→ `tsc --noEmit` → `vite build` 全绿；
+`bash -n deploy/nas_deploy_single.sh` 通过。新增接缝测试：
+`test_fit_backfill.py`（S1/S2）、`test_fit_backfill_job.py`（S3）、
+`test_fit_backfill_deploy.py`（S4）、`test_fit_backfill_alerts.py`（S5 + Q4，
+含补齐后 `/api/activities/detail` 由 `fit_missing` → `ok` 的端到端回归）。
+
+**文档口径同步**：README §5.5 删除 v3.4.4 的错误 `scp` / `root@` 搬运命令，
+改写为容器自愈；A.9.3 归因修正；进度表与标题推进到 v3.4.5。
+
+**优先级**：P1（持续性数据缺失）→ 已关闭。
 
 ---
 
