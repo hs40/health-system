@@ -21,8 +21,14 @@
 # 这里**不能**跑 `npm run gen:api`——本 stage 没有 Python，生成不了。
 FROM node:22-alpine AS fe
 WORKDIR /fe
+# 这里**不能用 `npm ci`**：`package-lock.json` 在 Windows 上生成，npm 只记录
+# 当前平台的可选依赖，lock 里没有 `@rollup/rollup-linux-x64-musl`。
+# `npm ci` 严格照 lock 安装 → rollup 缺原生模块 → `vite build` 直接失败
+# （v3.4.2 首次 CI 就是这么挂的：quality job 在 ubuntu runner 上 `npm ci` 能过，
+# 因为 Linux lock 里恰好有 gnu 变体，但 Alpine 要 musl 变体）。
+# `npm install` 会按当前平台补装缺失的可选依赖，代价是版本不是 lock 钉死的。
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 # schema.d.ts 必须已存在，否则 tsc 会「找不到模块」——这正是我们要的早期失败
 RUN test -f src/api/schema.d.ts || (echo "缺少 src/api/schema.d.ts：请先运行 npm run gen:api（CI 由 quality job 产出）" && exit 1)
