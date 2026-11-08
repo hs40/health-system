@@ -62,7 +62,15 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        run: npm ci
+        # **不能用 `npm ci`**：`package-lock.json` 是在 Windows 上生成的，
+        # npm 只记录当前平台的可选依赖，lock 里没有 `@rollup/rollup-linux-x64-gnu`
+        # / `@esbuild/linux-x64`。`npm ci` 严格照 lock 装 → 缺原生模块 →
+        # `vite build` 报 "Cannot find module @rollup/rollup-linux-x64-gnu"。
+        #
+        # `npm install` 会按当前平台补齐可选依赖。版本不再被 lock 钉死，
+        # 但 package.json 里的 `^x.y.z` 约束仍然生效。
+        # 根治方案（待办）：在 Linux 环境重新生成 lock。
+        run: npm install --no-audit --no-fund
         working-directory: frontend
 
       - name: Generate API types from backend OpenAPI
@@ -81,7 +89,23 @@ jobs:
         # 原因见 deploy/Dockerfile.single 头部：package-lock 是在 Windows 上生成的，
         # npm 只记录当前平台的可选依赖，Alpine 上 `npm ci` 会缺 rollup/esbuild 的
         # musl 原生模块。把构建固定在 ubuntu runner，镜像里就完全不需要 Node。
-        run: npx vite build
+        #
+        # 失败时把最后几十行打进 step summary + 注解：Actions 的普通日志
+        # 在无 admin token 时读不到，但这两处都能从 API 直接取。
+        run: |
+          set -o pipefail
+          npx vite build 2>&1 | tee /tmp/vite.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "## vite build 失败（最后 60 行）" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -60 /tmp/vite.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -15 /tmp/vite.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=vite build::${line}"
+            done
+          fi
+          exit "$status"
         working-directory: frontend
 
       - name: Upload frontend dist
