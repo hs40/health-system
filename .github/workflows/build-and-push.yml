@@ -62,15 +62,25 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        # **不能用 `npm ci`**：`package-lock.json` 是在 Windows 上生成的，
-        # npm 只记录当前平台的可选依赖，lock 里没有 `@rollup/rollup-linux-x64-gnu`
-        # / `@esbuild/linux-x64`。`npm ci` 严格照 lock 装 → 缺原生模块 →
-        # `vite build` 报 "Cannot find module @rollup/rollup-linux-x64-gnu"。
+        # `npm ci` 严格照 lock 安装，能保证可复现；但 `package-lock.json` 是在
+        # Windows 上生成的，npm 只记录**当前平台**的可选依赖，lock 里没有
+        # `@rollup/rollup-linux-x64-gnu` / `@esbuild/linux-x64`。
+        # 结果是 `vite build` 报 "Cannot find module @rollup/rollup-linux-x64-gnu"。
         #
-        # `npm install` 会按当前平台补齐可选依赖。版本不再被 lock 钉死，
-        # 但 package.json 里的 `^x.y.z` 约束仍然生效。
-        # 根治方案（待办）：在 Linux 环境重新生成 lock。
-        run: npm install --no-audit --no-fund
+        # 所以分两步：先用 npm ci 还原 lock 里的一切，
+        # 再显式补上 Linux 平台的原生包（--no-save，不污染 lock）。
+        #
+        # **必须带精确版本**：平台包与主包的版本是硬绑定（esbuild 0.21.5 ↔
+        # @esbuild/linux-x64 0.21.5）。不写版本号会装 latest，vite 加载时报
+        # "Host version X does not match binary version Y"。
+        # 版本来源：frontend/package-lock.json 里 node_modules/esbuild 与
+        # node_modules/rollup 的 version，升级这两个包时要同步改这里。
+        # backend/tests/test_deploy_config.py 会校验此处与 lock 一致。
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund \
+            @rollup/rollup-linux-x64-gnu@4.64.6 \
+            @esbuild/linux-x64@0.21.5
         working-directory: frontend
 
       - name: Generate API types from backend OpenAPI

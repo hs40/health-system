@@ -289,6 +289,35 @@ class TestCiQualityGate:
         assert "download-artifact" in text, "build job 未下载产物 artifact"
         assert "path: frontend/dist" in text, "dist artifact 路径未对齐"
 
+    def test_linux_native_pkgs_pinned_to_lock_versions(self):
+        """CI 补装的 Linux 原生包版本必须与 lock 里的主包版本一致。
+
+        背景：lock 在 Windows 上生成，没有 `@rollup/rollup-linux-x64-gnu` /
+        `@esbuild/linux-x64`，CI 要手动补。但这两个包的版本与 rollup / esbuild
+        **硬绑定**——装 latest 会得到 "Host version X does not match binary
+        version Y"。所以 workflow 里必须写死版本，且这个版本得跟着 lock 走。
+
+        这条测试是那条隐式约定的执行者：升级 vite / rollup 后忘了改 workflow，
+        CI 会以一种很难读的方式失败（vite 起不来），而不是在这里明确报错。
+        """
+        import json
+
+        lock_path = REPO_ROOT / "frontend" / "package-lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        packages = lock.get("packages", {})
+        esbuild_ver = packages["node_modules/esbuild"]["version"]
+        rollup_ver = packages["node_modules/rollup"]["version"]
+
+        text = self._workflow_text()
+        assert f"@rollup/rollup-linux-x64-gnu@{rollup_ver}" in text, (
+            f"workflow 里补装的 @rollup/rollup-linux-x64-gnu 版本与 lock 中 "
+            f"rollup {rollup_ver} 不一致"
+        )
+        assert f"@esbuild/linux-x64@{esbuild_ver}" in text, (
+            f"workflow 里补装的 @esbuild/linux-x64 版本与 lock 中 "
+            f"esbuild {esbuild_ver} 不一致"
+        )
+
 
 # ---------- 公网暴露风险声明（ARCHITECTURE_REVIEW A.6.1） ----------
 
