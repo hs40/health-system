@@ -650,6 +650,31 @@ health-system/
     时报。`test_fit_backfill_alerts.py` 覆盖三种严重情形、静默情形，以及补齐后
     `/api/activities/detail` 由 `fit_missing` → `ok` 的端到端回归。
 
+已解决（v3.4.6，力量明细「总次数冒充每组次数」回归 —— 三层修复）：
+
+31. ~~10-26 起力量 notes 把「3 组共 60 次」显示成「60次 × 3组」~~ →
+    与 v3.4.5 HR 两图**同根**：本机 daily 停跑 → 新活动缺 `fit_jsonl` →
+    `notes.py` 无 FIT 兜底把 `summarizedExerciseSets[].reps`（**N 组总次数**）
+    塞进「每组次数」位置。FIT 逐组 `set` 消息才是唯一正确来源；`23/3`、`70/6`
+    不整除，绝不能用 `reps/sets` 伪造每组值。
+32. ~~补 `fit_jsonl` 后云端错误 notes 不自愈~~ →
+    notes 在 23:00 上传时一次性固化，且「只补空、绝不覆盖已有 notes」是契约。
+    **A 层**：`tredict_sync_service._build_notes` 生成前调
+    `fit_backfill.ensure_fit_jsonl`，就地复用已落盘的 `.fit` 解析写 gz
+    （零额外 Garmin 请求），上传与补空两条路径都生效；**C 层**：无 FIT 时改用
+    不误导的总量表述「共60次（3组，缺逐组明细）」，绝不输出伪造每组值。
+33. ~~历史错误 notes 无回填手段~~ →
+    离线工具 `backend/scripts/strength_notes_backfill.py`：按三重判据（日期 ≥ 10-26
+    + 以「力量明细：」开头 + 与 FIT 重算的 want 有差异，且必须有 FIT 逐组明细）
+    产出受控清单，人工逐条确认后**仅对显式 `tredict_id` 白名单**调
+    `update_activity` 覆盖；不改「只补空」常驻契约、不动手写 / 旧 Node /
+    已正确 / 空 notes 记录。
+
+口径登记：`summarizedExerciseSets[].reps` = 总次数、`sets` = 组数，见
+`docs/派生指标口径登记表.md` §A-2 字段语义澄清；Q3 自重负荷高估
+（`exercises.py:181` 的 `sets × reps`）登记为独立遗留项 **S-1**，见
+`docs/待验证事项.md`，本次不纳入。
+
 尚存：
 
 1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），

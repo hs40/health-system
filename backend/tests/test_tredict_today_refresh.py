@@ -413,6 +413,88 @@ def test_does_not_overwrite_existing_notes(session, settings):
 
 
 # ============================================================
+# A 层（v3.4.6）：生成 notes 前就地补 fit_jsonl
+# ============================================================
+def test_strength_notes_use_fit_per_set_before_upload(session, settings, monkeypatch):
+    """上传前就地补 fit_jsonl → notes 走 FIT 逐组，而非「共N次」兜底。"""
+    import app.services.fit_backfill as fb
+    from app.parsers.fit import ParsedFit
+    from app.services.tredict_sync_service import run_tredict_sync
+
+    raw_garmin = Path(settings.raw_data_dir) / "garmin"
+    _write_strength_activity(raw_garmin, "659000009", "2026-11-05 10:00:00")
+    (raw_garmin / "fit").mkdir(parents=True, exist_ok=True)
+    (raw_garmin / "fit" / "659000009.fit").write_bytes(b"FITDATA")
+
+    def fake_parse(path: Path) -> ParsedFit:
+        return ParsedFit(
+            activity_id="659000009", file_sha256="fake", file_bytes=8,
+            messages={"set": [
+                {"set_type": "active", "category": ["squat", "squat"],
+                 "category_subtype": [0, 0], "repetitions": 20,
+                 "duration": 0, "weight": 0, "start_time": None}
+                for _ in range(3)
+            ]},
+        )
+
+    monkeypatch.setattr(fb, "parse_fit", fake_parse)
+
+    cloud = _NotesTredict()
+    run_tredict_sync(
+        session, settings, garmin=object(), tredict=cloud,
+        fit_fetcher=lambda aid: None, today=dt.date(2026, 11, 5),
+    )
+
+    assert len(cloud.upload_calls) == 1
+    notes = cloud.upload_calls[0][3]
+    assert "20次 × 3组" in notes, f"应走 FIT 逐组分支，实际 {notes!r}"
+    assert "缺逐组明细" not in notes, "A 层不该再触发 C 层兜底"
+    assert (raw_garmin / "fit_jsonl" / "659000009.jsonl.gz").exists()
+
+
+def test_backfill_notes_also_uses_fit_per_set(session, settings, monkeypatch):
+    """补空路径（_backfill_notes）生成 notes 前也就地补 gz、拿 FIT 逐组。"""
+    import app.services.fit_backfill as fb
+    from app.parsers.fit import ParsedFit
+    from app.services.tredict_sync_service import run_tredict_sync
+
+    raw_garmin = Path(settings.raw_data_dir) / "garmin"
+    _write_strength_activity(raw_garmin, "659000010", "2026-11-05 10:00:00")
+    (raw_garmin / "fit").mkdir(parents=True, exist_ok=True)
+    (raw_garmin / "fit" / "659000010.fit").write_bytes(b"FITDATA")
+
+    def fake_parse(path: Path) -> ParsedFit:
+        return ParsedFit(
+            activity_id="659000010", file_sha256="fake", file_bytes=8,
+            messages={"set": [
+                {"set_type": "active", "category": ["squat", "squat"],
+                 "category_subtype": [0, 0], "repetitions": 20,
+                 "duration": 0, "weight": 0, "start_time": None}
+                for _ in range(3)
+            ]},
+        )
+
+    monkeypatch.setattr(fb, "parse_fit", fake_parse)
+
+    cloud = _NotesTredict(cloud=[{
+        "id": "T-BACKFILL", "date": "2026-11-05T10:00:00.000Z",
+        "sportType": "misc", "subSportType": "strength_training",
+        "summary": {"duration": 1800}, "notes": "",
+    }])
+    run_tredict_sync(
+        session, settings, garmin=object(), tredict=cloud,
+        fit_fetcher=lambda aid: None, today=dt.date(2026, 11, 5),
+    )
+
+    assert cloud.upload_calls == [], "已存在不应重复上传"
+    assert len(cloud.update_calls) == 1
+    patched_notes = cloud.update_calls[0][1]["notes"]
+    assert "20次 × 3组" in patched_notes, f"应走 FIT 逐组分支，实际 {patched_notes!r}"
+    assert "缺逐组明细" not in patched_notes
+    assert (raw_garmin / "fit_jsonl" / "659000010.jsonl.gz").exists()
+
+
+# ============================================================
 # Q2 遗留③：sync_ledger 记账（运维台直接读这张表）
 # ============================================================
 def test_upload_writes_sync_ledger(session, settings):

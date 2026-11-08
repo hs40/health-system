@@ -125,3 +125,117 @@ def test_backfill_isolates_failures_and_records_reasons(tmp_path: Path) -> None:
     assert result.failures["b1"]
     assert "decode failed" in result.failures["b2"]
     assert load_fit_messages(root, "b3", {"record"}).source == "present"
+
+
+# ============================================================
+# A 层（v3.4.6）：力量 notes 生成前就地补 fit_jsonl
+# ============================================================
+def test_ensure_fit_jsonl_reuses_existing_fit_without_fetcher(tmp_path: Path) -> None:
+    """上传时 fit/<aid>.fit 已在手 → 就地解析写 gz，零额外 Garmin 请求。"""
+    from app.services.fit_backfill import ensure_fit_jsonl
+    from app.storage.activity_source import load_sets
+
+    root = tmp_path / "garmin"
+    (root / "fit").mkdir(parents=True)
+    (root / "fit" / "655588430.fit").write_bytes(b"FAKE-FIT")
+
+    calls: list[str] = []
+
+    def fetcher(aid: str) -> bytes | None:
+        calls.append(aid)
+        return None
+
+    def parser(path: Path) -> ParsedFit:
+        return ParsedFit(
+            activity_id="655588430",
+            file_sha256="fake",
+            file_bytes=8,
+            messages={"set": [
+                {"set_type": "active", "category": ["plank", "plank"],
+                 "category_subtype": [0, 0], "repetitions": 20,
+                 "duration": 0, "weight": 0, "start_time": None}
+                for _ in range(3)
+            ]},
+        )
+
+    ok = ensure_fit_jsonl(root, "655588430", fetcher=fetcher, parse=parser)
+
+    assert ok is True
+    assert calls == [], "盘上已有 .fit，不应再调 fetcher（零额外 Garmin 请求）"
+    assert (root / "fit_jsonl" / "655588430.jsonl.gz").exists()
+    assert len(load_sets(root, "655588430")) == 3
+
+
+def test_ensure_fit_jsonl_downloads_only_when_fit_also_missing(tmp_path: Path) -> None:
+    """A 层：.fit 也缺时才调 fetcher；拿到字节后 append-only 落盘并写 gz。"""
+    from app.services.fit_backfill import ensure_fit_jsonl
+
+    root = tmp_path / "garmin"
+    calls: list[str] = []
+
+    def fetcher(aid: str) -> bytes | None:
+        calls.append(aid)
+        return b"DOWNLOADED-FIT"
+
+    ok = ensure_fit_jsonl(
+        root, "655588430", fetcher=fetcher,
+        parse=lambda p: _parsed("655588430", [130]),
+    )
+
+    assert ok is True
+    assert calls == ["655588430"]
+    assert (root / "fit" / "655588430.fit").read_bytes() == b"DOWNLOADED-FIT"
+    assert (root / "fit_jsonl" / "655588430.jsonl.gz").exists()
+
+
+def test_ensure_fit_jsonl_isolates_parse_failure(tmp_path: Path) -> None:
+    """解析失败隔离：返回 False、不抛穿上传、不留下坏 gz。"""
+    from app.services.fit_backfill import ensure_fit_jsonl
+
+    root = tmp_path / "garmin"
+    (root / "fit").mkdir(parents=True)
+    (root / "fit" / "655588430.fit").write_bytes(b"BAD")
+
+    def boom(path: Path) -> ParsedFit:
+        raise RuntimeError("decode failed")
+
+    ok = ensure_fit_jsonl(root, "655588430", fetcher=lambda aid: None, parse=boom)
+
+    assert ok is False
+    assert not (root / "fit_jsonl" / "655588430.jsonl.gz").exists()
+
+
+def test_ensure_fit_jsonl_is_idempotent_when_gz_present(tmp_path: Path) -> None:
+    """已有 gz：直接返回 True，既不调 fetcher 也不调 parse，内容不被覆盖。"""
+    from app.services.fit_backfill import ensure_fit_jsonl
+
+    root = tmp_path / "garmin"
+    write_parsed_fit(root, _parsed("655588430", [999]))
+
+    calls: list[str] = []
+
+    def fetcher(aid: str) -> bytes | None:
+        calls.append(aid)
+        return None
+
+    def parser(path: Path) -> ParsedFit:
+        calls.append("parse")
+        return _parsed("655588430", [1])
+
+    ok = ensure_fit_jsonl(root, "655588430", fetcher=fetcher, parse=parser)
+
+    assert ok is True
+    assert calls == []
+    assert [
+        r["heart_rate"]
+        for r in load_fit_messages(root, "655588430", {"record"}).by_type["record"]
+    ] == [999]
+
+
+def test_ensure_fit_jsonl_without_fit_or_fetcher_returns_false(tmp_path: Path) -> None:
+    """无 .fit、无 fetcher：返回 False（让 C 层兜底接住），不抛。"""
+    from app.services.fit_backfill import ensure_fit_jsonl
+
+    root = tmp_path / "garmin"
+    assert ensure_fit_jsonl(root, "655588430") is False
+    assert not (root / "fit_jsonl" / "655588430.jsonl.gz").exists()

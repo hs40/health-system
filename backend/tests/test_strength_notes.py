@@ -207,7 +207,7 @@ def test_returns_empty_when_nothing_to_write() -> None:
 def test_warm_up_is_always_dropped() -> None:
     sets = [_set("WARM_UP", "STRETCH_CALF", 0), _set("LUNGE", "SIDE_LUNGE", 10, 3)]
     notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
-    assert notes == NOTES_HEADER + "侧弓步 10次 × 3组"
+    assert notes == NOTES_HEADER + "侧弓步 共10次（3组，缺逐组明细）"
 
 
 def test_exclude_subs_is_dropped() -> None:
@@ -260,7 +260,7 @@ def test_fit_weight_used_when_summary_has_none() -> None:
 def test_falls_back_to_summary_when_fit_missing() -> None:
     sets = [_set("LUNGE", "SIDE_LUNGE", 10, 3)]
     assert build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR).endswith(
-        "侧弓步 10次 × 3组"
+        "侧弓步 共10次（3组，缺逐组明细）"
     )
 
 
@@ -276,7 +276,7 @@ def test_falls_back_to_duration_when_no_reps() -> None:
         }
     ]
     notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
-    assert notes == NOTES_HEADER + "平板支撑 31s × 4组"
+    assert notes == NOTES_HEADER + "平板支撑 共31s（4组，缺逐组明细）"
 
 
 def test_entries_sorted_by_fit_start_and_unmatched_last() -> None:
@@ -284,7 +284,7 @@ def test_entries_sorted_by_fit_start_and_unmatched_last() -> None:
     sets = [_set("LUNGE", "SIDE_LUNGE", 10, 1), _set("CURL", "DUMBBELL_BICEPS_CURL", 8, 1)]
     fit = _fit("LUNGE", "SIDE_LUNGE", [10], start="2026-10-15T10:00:00+00:00")
     notes = build_strength_notes("1", sets, fit, moves=MOVES, corrections=CORR)
-    assert notes == NOTES_HEADER + "侧弓步 10次；哑铃弯举 8次 × 1组"
+    assert notes == NOTES_HEADER + "侧弓步 10次；哑铃弯举 共8次（1组，缺逐组明细）"
 
 
 def test_entries_reordered_by_fit_start() -> None:
@@ -299,12 +299,72 @@ def test_entries_reordered_by_fit_start() -> None:
 def test_falls_back_to_category_name_when_sub_missing() -> None:
     sets = [_set("LUNGE", "", 10, 2)]
     notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
-    assert notes == NOTES_HEADER + "弓箭步 10次 × 2组"
+    assert notes == NOTES_HEADER + "弓箭步 共10次（2组，缺逐组明细）"
 
 
 def test_truncate_notes_cuts_to_limit() -> None:
     assert truncate_notes("力量明细：abc", 5) == "力量明细："
     assert truncate_notes("abc", 10) == "abc"
+
+
+# ============================================================
+# 无 FIT 兜底：不得把「总次数」冒充「每组次数」（2026-10-26 回归）
+# ============================================================
+def test_fallback_states_total_not_per_set_when_no_fit() -> None:
+    """无 FIT 逐组明细时，汇总 reps 是「N 组总次数」，不是「每组次数」。
+
+    用户实测 10-27「宽距平板鸟狗式」：汇总 reps=60、sets=3，正确语义是
+    3 组共 60 次；旧兜底输出「60次 × 3组」把 60 当成每组次数（错）。
+    C 层改为不误导的总量表述，且绝不输出伪造的每组值。
+    """
+    sets = [
+        {
+            "category": "PLANK",
+            "subCategory": "WIDE_STANCE_PLANK_WITH_OPPOSITE_ARM_AND_LEG_LIFT",
+            "reps": 60,
+            "sets": 3,
+            "duration": 0,
+            "maxWeight": 0,
+        }
+    ]
+    notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
+    assert "共60次（3组，缺逐组明细）" in notes
+    assert "60次 × 3组" not in notes
+
+
+def test_fallback_never_invents_per_set_for_non_divisible_total() -> None:
+    """23 次 / 3 组、70 次 / 6 组都不整除：绝不输出 7.67 这类伪造每组值。"""
+    sets = [
+        {"category": "CURL", "subCategory": "DUMBBELL_FLY", "reps": 23,
+         "sets": 3, "duration": 0, "maxWeight": 8000},
+        {"category": "CURL", "subCategory": "DUMBBELL_BICEPS_CURL", "reps": 70,
+         "sets": 6, "duration": 0, "maxWeight": 4000},
+    ]
+    notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
+    assert "共23次（3组，缺逐组明细） @8kg" in notes
+    assert "共70次（6组，缺逐组明细） @4kg" in notes
+    assert "× 3组" not in notes and "× 6组" not in notes
+    assert "7.67" not in notes and "11.67" not in notes
+
+
+def test_fallback_single_side_uses_total_without_fake_per_side() -> None:
+    """单侧动作无逐组数据时，不编造「N次/侧 × M组」（会伪装成实测每组值）。"""
+    sets = [_set("LUNGE", "SIDE_LUNGE", 60, 3)]  # LUNGE/ 在 singleSide
+    notes = build_strength_notes("1", sets, [], moves=MOVES, corrections=CORR)
+    assert "共60次（3组，缺逐组明细）" in notes
+    assert "/侧" not in notes
+
+
+def test_fallback_source_never_formats_total_as_per_set() -> None:
+    """静态防线：兜底分支不得把总量塞回「N次 × N组」的每组位置（防回退）。"""
+    import inspect
+
+    import app.domain.strength.notes as mod
+
+    src = inspect.getsource(mod)
+    assert "缺逐组明细" in src
+    assert 'f"{js_number(reps)}次 × {js_number(n_sets)}组"' not in src
+    assert 'f"{js_number(seconds)}s × {js_number(n_sets)}组"' not in src
 
 
 # ============================================================

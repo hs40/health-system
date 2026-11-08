@@ -33,6 +33,7 @@ from sqlmodel import Session
 
 from app.config import Settings
 from app.schemas.enums import AuditCategory, MessageCategory, MessageImportance
+from app.services.strength_notes_service import build_strength_activity_notes
 
 logger = logging.getLogger("hs.services.tredict_sync")
 
@@ -223,30 +224,12 @@ def default_fit_fetcher(garmin: Any) -> Callable[[str], bytes | None]:
 # ============================================================
 # 子步骤：活动 / 健康 / 校验
 # ============================================================
-def _is_strength(type_key: str) -> bool:
-    """与旧脚本 ``upload_tredict_activity.py`` 同口径：typeKey 含 ``strength``。"""
-    return "strength" in (type_key or "")
-
-
-def _build_notes(settings: Settings, ref: Any, limit: int) -> str:
-    """力量活动 → notes（复用 ``domain/strength/notes``）；非力量返回空串。"""
-    from app.domain.strength.notes import build_strength_notes, truncate_notes
-    from app.storage.activity_source import load_sets
-
-    if ref is None or not _is_strength(getattr(ref, "activity_type", "")):
-        return ""
-    payload = getattr(ref, "payload", {}) or {}
-    aid = str(getattr(ref, "activity_id", ""))
-    text = build_strength_notes(
-        aid,
-        payload.get("summarizedExerciseSets"),
-        load_sets(garmin_raw_dir(settings), aid),
-    )
-    return truncate_notes(text, limit)
-
-
 def _backfill_notes(
-    settings: Settings, tredict: Any, activities: dict, cloud_list: list[dict]
+    settings: Settings,
+    tredict: Any,
+    activities: dict,
+    cloud_list: list[dict],
+    fit_fetcher: Callable[[str], bytes | None] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Q4：对云端已存在、notes 为空的记录补写 notes（只补空、幂等）。
 
@@ -269,7 +252,10 @@ def _backfill_notes(
             continue
         if cloud_notes.get(str(outcome.tredict_id)):
             continue  # 已有 notes：只补空，绝不覆盖
-        want = _build_notes(settings, activities.get(outcome.garmin_id), NOTES_LIMIT_UPDATE)
+        want = build_strength_activity_notes(
+            settings, activities.get(outcome.garmin_id), NOTES_LIMIT_UPDATE,
+            fit_fetcher=fit_fetcher,
+        )
         if not want:
             continue
         try:
@@ -355,7 +341,9 @@ def _sync_activities(
             continue
         ref = activities.get(aid)
         name = str(ref.name) if ref is not None else ""
-        notes = _build_notes(settings, ref, NOTES_LIMIT_UPLOAD)
+        notes = build_strength_activity_notes(
+            settings, ref, NOTES_LIMIT_UPLOAD, fit_fetcher=fit_fetcher
+        )
         try:
             r = tredict.upload_activity(aid, fit, name=name, notes=notes)
         except Exception as e:  # noqa: BLE001 — 单条失败不阻断
@@ -374,7 +362,9 @@ def _sync_activities(
                 {"activity_id": aid, "status": r.get("status"), "error": r.get("text", "")}
             )
 
-    meta_updated, meta_failed = _backfill_notes(settings, tredict, activities, cloud_list)
+    meta_updated, meta_failed = _backfill_notes(
+        settings, tredict, activities, cloud_list, fit_fetcher
+    )
     return {
         "local": len(activities),
         "cloud": len(cloud_list),

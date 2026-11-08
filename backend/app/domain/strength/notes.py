@@ -22,6 +22,16 @@ Tredict 上 65 条力量活动**全部**带 notes（46–302 字），它们是�
    不必再解一遍 FIT，也让单测不需要真实文件。
 3. **``Math.round`` 用 ``floor(x+0.5)``**：Python 的 ``round()`` 是银行家舍入，
    ``round(30.5)`` 得 30 而 JS 得 31，会逐字不一致。
+
+无 FIT 兜底（v3.4.6 口径修正）
+------------------------------
+``summarizedExerciseSets[].reps`` / ``duration`` 是「N 组**总量**」，不是每组值。
+FIT 逐组明细缺失时（本机 daily 停跑、NAS 新活动无 ``fit_jsonl``），旧兜底把总量
+塞进「N次 × M组」的每组位置，等于把「3 组共 60 次」谎报成「每组 60 次」
+（2026-10-26 起暴露）。v3.4.6 起改为不误导的总量表述
+「共60次（3组，缺逐组明细）」，**绝不伪造每组值**（23/3、70/6 不整除时更危险）。
+这是 Python 侧防御分支，不追求与旧 Node 版逐字一致；正确逐组值一律以 FIT
+``set`` 消息为准。parity 比对只覆盖有 FIT 的历史 notes，兜底零覆盖。
 """
 
 from __future__ import annotations
@@ -307,13 +317,17 @@ def build_strength_notes(
         elif group and group["sets"]:
             body = fmt_per_set([x["dur"] for x in group["sets"]], "s", is_single)
         else:
+            # 无 FIT 逐组明细时，汇总的 reps / duration 是「N 组总量」，不是每组值。
+            # 旧版把它塞进「N次 × M组」的位置，等于把 3 组共 60 次谎报成每组 60 次
+            # （2026-10-26 起暴露）。绝不伪造每组值（60/3 或 23/3 不整除时更危险），
+            # 改用不误导的总量表述；@kg 重量后缀由下方 f"{zh} {body}{weight}" 保留。
             reps = _num(item.get("reps"))
             n_sets = _num(item.get("sets"))
             if reps > 0:
-                body = f"{js_number(reps)}次 × {js_number(n_sets)}组"
+                body = f"共{js_number(reps)}次（{js_number(n_sets)}组，缺逐组明细）"
             else:
                 seconds = js_round(_num(item.get("duration")) / 1000)
-                body = f"{js_number(seconds)}s × {js_number(n_sets)}组"
+                body = f"共{js_number(seconds)}s（{js_number(n_sets)}组，缺逐组明细）"
 
         entries.append((start, f"{zh} {body}{weight}"))
 

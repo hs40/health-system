@@ -51,6 +51,46 @@ def write_parsed_fit(garmin_root: Path, parsed: ParsedFit) -> int:
     return write_jsonl_gz(parsed, out)
 
 
+def ensure_fit_jsonl(
+    garmin_root: Path,
+    aid: str,
+    *,
+    fetcher: Callable[[str], bytes | None] | None = None,
+    parse: Callable[[Path], ParsedFit] | None = None,
+) -> bool:
+    """保证 ``fit_jsonl/<aid>.jsonl.gz`` 就绪，返回是否就绪。
+
+    力量 notes（``domain/strength/notes``）与训练详情 HR 图共享同一份 FIT 逐组
+    明细。上传链路 ``_ensure_fit`` 已把 ``.fit`` 落盘到 ``fit/<aid>.fit``，这里
+    **就地解析**：零额外 Garmin 请求即可让 ``load_sets`` 读到逐组数据。仅当
+    ``.fit`` 也缺且提供 ``fetcher`` 时（Q2 已授权无人值守拉取）才下载；任何失败
+    隔离返回 ``False``，绝不抛穿上传主流程 —— 由 notes 兜底 / ``hr_data_state``
+    接住，C 层防御不会输出伪造每组值。
+    """
+    root = Path(garmin_root)
+    out = root / "fit_jsonl" / f"{aid}.jsonl.gz"
+    if out.exists():  # 幂等：已有明细直接复用，绝不覆盖
+        return True
+    parser = parse or parse_fit
+    fit_path = root / "fit" / f"{aid}.fit"
+    try:
+        if not fit_path.exists():
+            if fetcher is None:
+                return False
+            blob = fetcher(aid)
+            if not blob:
+                return False
+            fit_path.parent.mkdir(parents=True, exist_ok=True)
+            fit_path.write_bytes(blob)  # append-only：上面已确认不存在
+        parsed = parser(fit_path)
+        # 固定写 <aid>.jsonl.gz，不依赖 parsed.activity_id 与文件名一致
+        write_jsonl_gz(parsed, out)
+        return out.exists()
+    except Exception as e:  # noqa: BLE001 — 单条失败不阻断上传
+        logger.warning("就地补齐 %s 明细失败：%s", aid, e)
+        return False
+
+
 @dataclass(slots=True)
 class BackfillResult:
     """逐条补齐结果：只补空、失败隔离，供上层记 ledger / 告警。"""
@@ -316,6 +356,7 @@ __all__ = [
     "backfill_missing",
     "build_alert",
     "dingtalk_reasons",
+    "ensure_fit_jsonl",
     "missing_fit_ids",
     "run_backfill",
     "write_ledger",
