@@ -32,7 +32,10 @@ RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 # schema.d.ts 必须已存在，否则 tsc 会「找不到模块」——这正是我们要的早期失败
 RUN test -f src/api/schema.d.ts || (echo "缺少 src/api/schema.d.ts：请先运行 npm run gen:api（CI 由 quality job 产出）" && exit 1)
-RUN npm run build
+# 拆成两步而不是 `npm run build`：CI 里挂在 build 时看不出是类型错还是打包错，
+# 拆开后失败步骤名直接告诉你是哪一半。
+RUN npx tsc --noEmit
+RUN npx vite build
 
 # ---------- Stage 2：运行时 ----------
 FROM python:3.12-slim
