@@ -517,12 +517,21 @@ health-system/
     CI 顺序固定为 `gen:api → tsc`，`schema.d.ts` 以 artifact 传给镜像构建（A.9 剩余）。
 20. ~~`WeeklyPlan.evaluation` 是 `dict`，落库时把 pydantic 对象塞进 JSON 列~~ →
     改为 `PlanEvaluation | None`，由 `_plan_payload` 显式 `model_dump`。
+21. ~~CI 前端构建在 Linux runner 上失败，Windows 本地却通过~~ →
+    `package-lock.json` 在 Windows 生成，lock 里没有 `@rollup/rollup-linux-x64-gnu` /
+    `@esbuild/linux-x64` 条目，`npm ci` 永远不会装它们。CI 改为 `npm ci` 后补装
+    这两个包（版本与 lock 逐字一致，由测试把关）；前端构建整体前移到 quality job，
+    Dockerfile 只剩 `COPY frontend/dist`，不再碰 npm。
 
 尚存：
 
 1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），
    这是**依据等级**标注而非待办——阈值现在可通过数据文件校准，但「校准到多少」需真实数据支撑。
 2. `frontend/nginx.conf`（旧独立前端镜像的配置）已无引用，可择机删除。
+3. `package-lock.json` 没有全平台的 `optionalDependencies`。当前靠 CI 里那两行
+   `npm install --no-save` 兜住，但它需要手工跟随 vite/rollup 升级。根治办法是在
+   Linux 环境重跑一次 `npm install --package-lock-only`，让 lock 带上全平台条目——
+   之后 CI 可恢复成纯 `npm ci`，那两行也能删。
 
 ### 9.4 给 AI 编码代理
 

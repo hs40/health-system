@@ -426,10 +426,12 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
 
 **改进方向**：在 CI 中跑完整 pytest（含 FIT 依赖）与前端 `npm run build`，作为镜像构建前置。
 
-**实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q`），
-`build-and-push` 声明 `needs: quality`。前端构建校验已下移到 Dockerfile stage 1
-（CI job 内跑 `npm run build` 会因平台差异误报，见 v3.3.x 记录）。
-锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（5 条，校验 job 存在与依赖关系）。
+**实际落地**：workflow 新增 `quality` job（`ruff check` + `python -m pytest tests/ -q`
++ 前端 `gen:api` / `tsc` / `vite build`），`build-and-push` 声明 `needs: quality`，
+镜像构建**只消费** quality job 产出的 `frontend/dist` artifact。
+锁定测试：`tests/test_deploy_config.py::TestCiQualityGate`（8 条：job 存在与依赖关系、
+Dockerfile 不含 npm 指令、`gen:api` 早于 `tsc`、dist artifact 双向传递、
+平台包版本与 lock 一致）。
 
 **优先级**：P1 → 已关闭。
 
@@ -455,8 +457,46 @@ Garmin 只判 `tokenstore/tokens.json` 或 `garmin_email`；Tredict 只判 `sett
   `Plan12WeekItem` / `WeekPlanCard`），并把 `WeeklyPlan.evaluation` 从 `dict` 改成 `PlanEvaluation`。
   收紧后立刻暴露两个真 bug：`plan_service._plan_payload` 把 `PlanEvaluation` 对象直接塞进 JSON 列
   （`TypeError: not JSON serializable`）、`Plan12Week.weeks` 前端一直读到 `unknown`。
-- CI 顺序固定为 `npm ci → npm run gen:api → npx tsc --noEmit`，`schema.d.ts` 以 artifact 传给
-  build job，`Dockerfile.single` 加 `test -f src/api/schema.d.ts` 守卫。
+- CI 顺序固定为 `npm ci → gen:api → tsc → vite build → 上传 dist artifact`；
+  `build-and-push` job 下载该 artifact 后只做 `COPY frontend/dist`，
+  `Dockerfile.single` 里**不再有任何 npm 指令**。
+
+**关于 CI 构建的三次失败（v3.4.2 落地过程中的主要成本）**：
+
+| 尝试 | 做法 | 结果 |
+| --- | --- | --- |
+| 1 | Dockerfile 里 `npm ci` + `npm run build`（Alpine） | 失败，只有 `exit code 1` |
+| 2 | 改 `npm install`（以为缺 musl 原生模块） | 仍失败 |
+| 3 | 前端构建移出 Dockerfile，交给 ubuntu runner | 仍失败，但**定位到** `vite build` 失败而 `tsc` 通过 |
+
+**根因**：`package-lock.json` 在 Windows 上生成。npm 写 lock 时只记录**当前平台**的
+`optionalDependencies`，所以 lock 里根本没有 `@rollup/rollup-linux-x64-gnu` 和
+`@esbuild/linux-x64` 的条目。`npm ci` 严格照 lock 安装，这两个包永远不会被装上，
+`vite` 启动即 `Cannot find module @rollup/rollup-linux-x64-gnu`。
+
+**最终修法**（`.github/workflows/build-and-push.yml`）：
+
+```yaml
+run: |
+  npm ci --no-audit --no-fund
+  npm install --no-save --no-audit --no-fund \
+    @rollup/rollup-linux-x64-gnu@4.64.6 \
+    @esbuild/linux-x64@0.21.5
+```
+
+两条约束都不可省：
+
+- **必须带精确版本**。平台包与主包硬绑定（`esbuild 0.21.5 ↔ @esbuild/linux-x64 0.21.5`），
+  装 latest 会得到 `Host version X does not match binary version Y`，比原来的错误更难读。
+- **必须 `--no-save`**。否则 `npm install` 会把 Linux 平台包写回 lock，
+  下次在 Windows 本地 `npm ci` 又会去装 linux 包。
+
+`tests/test_deploy_config.py::test_linux_native_pkgs_pinned_to_lock_versions` 读
+`package-lock.json` 断言 workflow 里的版本号与之逐字一致——升级 vite 后忘了同步，
+测试先红，而不是等 CI 用「vite 起不来」的方式报错。
+
+**根治待办**：在 Linux 环境重新生成一次 `package-lock.json`（见 README §9.3）。
+lock 里有了全平台条目后，这两行 `npm install` 就可以删掉，恢复纯 `npm ci`。
 
 **优先级**：P2 → 已关闭。
 
