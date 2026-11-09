@@ -99,10 +99,14 @@ def test_recovery_day_builds_fixed_template_without_llm(session, monkeypatch):
     )
     assert "恢复" in ts.name
     assert ts.rationale == rr.RECOVERY_TEMPLATE_NOTE
-    # 低强度：无力量动作、主阶段只有 Z1
+    # 低强度：无力量动作、主阶段只有 Z1。
+    # hr_zone 契约是数字 1-5（target_hr_zone 才是 "Z1"）——v3.4.7 修正。
+    from app.domain.plan_rules import zone_int
+
     assert ts.strength is None
     assert all(
-        x.get("hr_zone") in (None, rr.RECOVERY_TEMPLATE_ZONE) for x in ts.main
+        x.get("hr_zone") in (None, zone_int(rr.RECOVERY_TEMPLATE_ZONE))
+        for x in ts.main
     )
 
 

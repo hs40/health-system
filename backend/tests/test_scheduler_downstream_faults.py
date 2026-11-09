@@ -201,6 +201,44 @@ def test_fault_recording_failure_does_not_break_pipeline(session, monkeypatch):
     assert "dingtalk" in out["steps"]
 
 
+def test_report_failure_is_recorded_as_fault_and_does_not_abort(session, monkeypatch):
+    """日报生成失败 → 登记 Fault（report@date）、后续步骤照跑、绝不抛穿。
+
+    2026-11-09 真实故障：``generate_report`` 抛 ValueError 时该步是
+    ``_run_downstream`` 里唯一没有 try/except 的步骤 → 整个日任务抛穿，
+    当天日报缺失、无 Fault、六次调度全部静默失败。
+    """
+    import app.orchestrator.scheduler as sched
+
+    called: list[str] = []
+
+    def _boom(*_a, **_k):
+        raise ValueError("invalid literal for int() with base 10: 'Z1'")
+
+    _patch_downstream(monkeypatch)
+    monkeypatch.setattr(sched, "generate_report", _boom)
+    monkeypatch.setattr(
+        sched, "analyze_daily",
+        lambda *a, **k: called.append("analysis") or {"summary": "ok"},
+    )
+    monkeypatch.setattr(
+        sched, "push_daily_report",
+        lambda *a, **k: called.append("dingtalk") or "skipped",
+    )
+
+    out: dict = {"date": DAY.isoformat(), "steps": {}}
+    _run_downstream(session, DAY, _FakeSettings(), out, _FakeSync())  # 不得抛穿
+
+    assert out["steps"]["report"].startswith("failed:")
+    assert called == ["analysis", "dingtalk"], "失败不得阻断后续步骤"
+    faults = _faults(session)
+    assert len(faults) == 1
+    assert "report" in faults[0].impact_scope
+    assert DAY.isoformat() in faults[0].impact_scope
+    assert "ValueError" in faults[0].fix_measures
+    assert faults[0].severity == "general"
+
+
 def test_no_fault_recorded_on_full_success(session, monkeypatch):
     """全部成功 → 一条 Fault 都不产生（避免噪声污染运维台）。"""
     _patch_downstream(monkeypatch)

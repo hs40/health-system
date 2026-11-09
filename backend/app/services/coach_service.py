@@ -20,6 +20,7 @@ from app.db.models import DailyReportRow, RiskAssessmentRow, TrainingSessionRow
 from app.domain import equipment
 from app.domain import rule_registry as rr
 from app.domain.plan_rules import valid_zone as _valid_zone
+from app.domain.plan_rules import zone_int
 from app.domain.quality import may_generate_plan
 from app.domain.risk import allows_recovery_day, blocks_generate, blocks_upload
 from app.errors import AppError
@@ -388,7 +389,11 @@ def _recovery_session(day: dt.date) -> TrainingSession:
             {
                 "name": "慢走或极低强度有氧",
                 "duration_sec": cardio_sec,
-                "hr_zone": rr.RECOVERY_TEMPLATE_ZONE,
+                # hr_zone 契约是数字 1-5（见 plan_service 的 LLM prompt 与
+                # prescription.zoneNumber）；RECOVERY_TEMPLATE_ZONE 是 "Z1"，
+                # 只能用于 target_hr_zone。2026-11-09 曾因直接写该常量导致
+                # goal_progress 的 int() 崩溃、当天日报缺失。
+                "hr_zone": zone_int(rr.RECOVERY_TEMPLATE_ZONE),
             },
             {"name": "全身静态拉伸", "duration_sec": stretch_sec},
         ],

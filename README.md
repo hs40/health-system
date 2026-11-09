@@ -675,6 +675,26 @@ health-system/
 （`exercises.py:181` 的 `sets × reps`）登记为独立遗留项 **S-1**，见
 `docs/待验证事项.md`，本次不纳入。
 
+已解决（v3.4.7，日报因恢复日模板 `hr_zone` 脏值静默缺失 —— 三层修复）：
+
+34. ~~11-09 日报全天未生成、六次调度全部静默失败~~ →
+    P1 恢复日模板把 `RECOVERY_TEMPLATE_ZONE`（`"Z1"`）误写进 `main[].hr_zone`
+    （该字段契约是数字 1–5，`target_hr_zone` 才是 `Z1`）；11-08 的恢复日计划
+    在 11-09 首次进入 `goal_progress` 的 7+7 天窗口 → `int("Z1")` 抛
+    `ValueError` → `generate_daily` 抛穿 → 当天日报缺失、无 Fault、无 audit。
+35. ~~上下游都不认这个格式~~ →
+    **A 上游**：`coach_service._recovery_session` 改用 `zone_int(...)` 写数字 1，
+    不再产生脏数据；**B 下游**：`goal_progress._zone_number` 兼容 `1` / `"2"` /
+    `"Z2"` / `"z2"`，越界与脏值跳过（同时修好 DB 里**已存在**的历史脏数据）。
+36. ~~日报生成是下游唯一没有兜底的步骤~~ →
+    **C 调度**：`scheduler._run_downstream` 给 `generate_report` 加 try/except +
+    `_record_step_fault("report@<date>")`，失败不抛穿、后续步骤照跑、运维台可见；
+    与其余四步（analysis / plan / dingtalk / upload）口径一致。
+
+诊断方法（可复用）：把 NAS DB 做 `sqlite3 .backup` 一致性快照 + activities 拉回本机
+副本，用本机 `.venv` 直接调 `generate_report(date)` 复现 traceback，全程不动生产。
+部署 v3.4.7 后需在容器内手动触发一次日任务补生成当日日报（07:30 已过不会自动重跑）。
+
 尚存：
 
 1. 代码里仍保留「阈值均为候选值」的依据说明（`rule_registry` 的 `Basis.INFERRED`），

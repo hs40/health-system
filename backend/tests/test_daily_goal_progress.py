@@ -122,3 +122,63 @@ def test_persisted_payload_contains_goal_progress(session, settings):
     gp = row.payload.get("goal_progress")
     assert gp is not None
     assert list(gp["goals"]) == GOAL_KEYS
+
+
+def test_z_prefixed_hr_zone_does_not_break_daily_report(session, settings):
+    """恢复日模板曾把 hr_zone 误写成 "Z1"，日报生成不得因 int() 崩溃。
+
+    2026-11-09 真实故障：11-08 的 P1 恢复日计划 main[].hr_zone="Z1"，
+    11-09 的 goal_progress 窗口首次覆盖它 → int("Z1") 抛 ValueError →
+    整条日任务抛穿、当天日报缺失（六次调度全部失败、无 Fault）。
+    """
+    from app.db.models import TrainingSessionRow
+
+    _seed(session)
+    session.add(
+        TrainingSessionRow(
+            id="session-recovery-Z1",
+            date=D,
+            sport="indoorCardio",
+            name="恢复日：主动恢复",
+            payload={
+                "main": [
+                    {"name": "慢走", "duration_sec": 660, "hr_zone": "Z1"},
+                ],
+            },
+        )
+    )
+    session.commit()
+
+    report = generate_daily(session, D, settings)  # 不得抛 ValueError
+    assert report.goal_progress is not None
+    assert list(report.goal_progress["goals"]) == GOAL_KEYS
+
+
+def test_zone_minutes_accepts_numeric_and_z_prefixed_and_skips_garbage(session, settings):
+    """hr_zone 数字 / "Z2" / "z2" 都正确计入；越界与脏值跳过，不编造区间。"""
+    from app.db.models import TrainingSessionRow
+
+    _seed(session)
+    session.add(
+        TrainingSessionRow(
+            id="session-mixed-zones",
+            date=D,
+            sport="running",
+            name="混合区间",
+            payload={
+                "main": [
+                    {"name": "数字", "duration_sec": 600, "hr_zone": 2},
+                    {"name": "大写Z", "duration_sec": 600, "hr_zone": "Z3"},
+                    {"name": "小写z", "duration_sec": 300, "hr_zone": "z2"},
+                    {"name": "越界", "duration_sec": 600, "hr_zone": "Z9"},
+                    {"name": "脏值", "duration_sec": 600, "hr_zone": "abc"},
+                ],
+            },
+        )
+    )
+    session.commit()
+
+    report = generate_daily(session, D, settings)
+    endurance = report.goal_progress["goals"]["muscleEndurance"]
+    assert endurance["source"] == "measured"
+    assert endurance["value"] == 25.0  # Z2 10 + Z3 10 + Z2 5 分钟

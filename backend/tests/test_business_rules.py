@@ -214,6 +214,30 @@ def test_p1_blocks_regular_plan_without_calling_llm(session, monkeypatch):
     assert 15 <= plan.duration_min <= 20
 
 
+def test_p1_recovery_plan_hr_zone_is_numeric(session, monkeypatch):
+    """恢复日模板 main[].hr_zone 必须是数字 1-5，不能是 "Z1"。
+
+    ``target_hr_zone`` 用 "Z1" 是对的；2026-11-09 故障正是把同一个
+    ``RECOVERY_TEMPLATE_ZONE`` 常量误写进 ``hr_zone``，导致日报 goal_progress
+    的 ``int()`` 崩溃、当天日报缺失（六次调度全部静默失败）。
+    """
+    _forbid_llm(monkeypatch)
+    _persist_report(
+        session,
+        _report(
+            priority=PriorityLevel.REST,
+            rules=["P1-LOAD-HRV"],
+            grade_value=QualityGrade.OK,
+            missing=[],
+        ),
+    )
+    plan = build_today_plan(session, D, SETTINGS)
+    assert plan is not None
+    assert plan.target_hr_zone == "Z1"
+    zones = [s.get("hr_zone") for s in plan.main if s.get("hr_zone") is not None]
+    assert zones == [1], f"hr_zone 契约是数字 1-5，实际 {zones!r}"
+
+
 def test_p2_allows_generate_but_flags_review(session, monkeypatch):
     """Q26：P2 减量允许生成计划，但 **必须标记为不可上传**（只拦上传）。"""
     _persist_report(

@@ -79,9 +79,21 @@ def _get_standard(session, target):
 
 
 def _run_downstream(session, target, settings, out: dict, sync) -> None:
-    """生成日报 → LLM 分析 → 当日计划 → 钉钉推送 → 上传课程（不排期）。"""
-    report = generate_report(session, target, settings, sync_errors=sync.errors)
-    if report.risk is not None:
+    """生成日报 → LLM 分析 → 当日计划 → 钉钉推送 → 上传课程（不排期）。
+
+    日报生成是下游第一步，必须自带兜底：2026-11-09 恢复日模板写入
+    ``hr_zone="Z1"`` 触发 ValueError，此步当时是唯一没有 try/except 的步骤 →
+    整条日任务抛穿、当天日报缺失且无任何 Fault 记录（六次调度全部静默失败）。
+    此后与其它步骤一致：失败登记 Fault + 不阻断后续步骤。
+    """
+    report = None
+    try:
+        report = generate_report(session, target, settings, sync_errors=sync.errors)
+        out["steps"]["report"] = "ok"
+    except Exception as e:  # noqa: BLE001 — 单步失败不阻断后续
+        out["steps"]["report"] = f"failed: {e}"
+        _record_step_fault(session, step="report", day=target, exc=e)
+    if report is not None and report.risk is not None:
         out["steps"]["risk"] = report.risk.priority.value
         out["steps"]["data_state"] = report.risk.data_state.value
 

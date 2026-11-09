@@ -55,6 +55,25 @@ GOAL_SPEC: dict[str, dict] = {
 }
 
 
+def _zone_number(value: object) -> int | None:
+    """``hr_zone`` 归一化：兼容 ``1``~``5`` 的数字与 ``"Z1"``~``"Z5"``，脏值/越界 → None。
+
+    契约上 ``main[].hr_zone`` 是数字 1-5（``plan_service`` 的 LLM prompt）；
+    但 P1 恢复日模板历史上误把 ``RECOVERY_TEMPLATE_ZONE``（``"Z1"``）写进该字段。
+    两种格式都必须能读，且任何脏值都不得让日报生成崩掉（2026-11-09 故障）。
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    s = str(value).strip().upper()
+    if s.startswith("Z"):
+        s = s[1:]
+    try:
+        n = int(float(s))
+    except (ValueError, OverflowError):
+        return None
+    return n if 1 <= n <= 5 else None
+
+
 def _zone_minutes_by_date(
     session: Session, start: dt.date | None = None, end: dt.date | None = None
 ) -> dict[dt.date, dict[str, int]]:
@@ -83,7 +102,10 @@ def _zone_minutes_by_date(
                     minutes = int(round(float(sec) / 60))
                 except (TypeError, ValueError):
                     continue
-                key = f"Z{int(zone)}"
+                zone_num = _zone_number(zone)
+                if zone_num is None:
+                    continue
+                key = f"Z{zone_num}"
                 bucket[key] = bucket.get(key, 0) + minutes
     return out
 
