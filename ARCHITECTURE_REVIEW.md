@@ -33,7 +33,7 @@
 | 死资产清理          | 旧前后端独立镜像 Dockerfile / nginx.conf / `.dockerignore` 全删          | ✅ v3.4.3           |
 | A.9 收尾（训练）    | 训练详情契约纳入 OpenAPI：`response_model` + `training.ts` 派生             | ✅ v3.4.4           |
 | 数据可观测性         | FIT 明细缺失显式 `hr_data_state` 三态 + NAS 部署前自检                     | ✅ v3.4.4           |
-| 数据自愈（训练）      | 容器自足补齐 `fit_jsonl`：scheduler job + 部署即触发 + 失败告警/ledger        | ✅ v3.4.5           |
+| 数据自愈（训练）      | 容器自足补齐 `fit_jsonl`：23:30 job + 上传时就地补 gz + 失败告警/ledger（部署即触发 v3.4.8 移除） | ✅ v3.4.5           |
 | 力量明细回归         | 三层：生成 notes 前就地补 gz + 不误导兜底 + 受控清单回填历史错误 notes          | ✅ v3.4.6           |
 | 日任务容错（日报）     | `hr_zone` 脏值不再让日报静默缺失：上游格式 + 下游归一化 + 生成步 Fault 兜底       | ✅ v3.4.7           |
 
@@ -569,7 +569,8 @@ NAS 新活动必然 `fit_missing`。一次搬运不能根治。
 
 - Q1 = A 容器自足：app 内新增「逐秒心率补齐」服务 + scheduler job，不依赖本机链路；
 - Q2 = 是：授权容器无人值守登录 Garmin 拉取个人健康数据，沿用现有凭据；
-- Q3：新增独立 job 每日 23:30（`fit_backfill_cron`），部署后 `docker exec` 立即触发一次；
+- Q3：新增独立 job 每日 23:30（`fit_backfill_cron`），部署后 `docker exec` 立即触发一次
+  （该「立即触发」即 5.1，已于 v3.4.8 移除，见下方落地段的补注）；
 - Q4：逐条失败写 ledger + 汇总进消息中心，钉钉只在整批失败 / 登录失效 /
   连续 3 天仍有缺口时报，成功补齐不刷屏；
 - Q5：TDD 接缝 S1-S5 逐片红→绿。
@@ -588,6 +589,10 @@ NAS 新活动必然 `fit_missing`。一次搬运不能根治。
 - `deploy/nas_deploy_single.sh`：删除人工搬运提示，自检文案改为「容器将自动补齐」，
   健康检查后 `docker exec hs-app python -m app.services.fit_backfill` 立即触发；
   失败不阻断部署（夜间 job 重试）。脚本仍不含搬运指令。
+
+> **补注（v3.4.8，保留上文作为 v3.4.5 历史快照）**：上文的「部署后立即触发」（5.1）
+> 已移除。稳定态下明细由 23:30 job + v3.4.6 上传时 `ensure_fit_jsonl` 就地补 gz
+> 保障；5.1 实测退化为 `skipped=316 / filled=[]`、零 Garmin 请求的幂等空跑。
 - 前端零改动（v3.4.4 三态文案已够），不引入 vitest / 不改 `useMemo`。
 
 **验证**：全量 pytest 1193 passed；`ruff check app/ scripts/ tests/` 全绿；

@@ -146,13 +146,6 @@ else
   echo "健康检查未通过 ⚠️  请查看：$COMPOSE -f docker-compose.single.yml logs --tail=120"
 fi
 
-log "5.1 触发一次逐秒心率明细补齐（v3.4.5）"
-# 容器镜像内已有解析引擎与 Garmin 凭据；部署完立即补齐，不必等到当晚 23:30。
-# 失败不阻断部署：夜间调度 job 会重试，详情页会显示 fit_missing 便于排查。
-if ! "$DOCKER" exec hs-app python -m app.services.fit_backfill; then
-  echo "  [提示] 立即补齐未成功（不影响部署）；今晚 23:30 调度任务会自动重试。"
-fi
-
 log "6. 状态"
 $COMPOSE -f docker-compose.single.yml ps
 echo

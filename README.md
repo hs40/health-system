@@ -280,6 +280,10 @@ HS_TAG=v3.1.0 bash nas_deploy_single.sh
 补齐从未运行，导致 2026-10-26 之后跑步详情页两张 HR 图升级后仍未恢复；同步脚本并
 手动触发一次 `fit_backfill` 后才恢复。
 
+> 补注（v3.4.8）：上文的「5.1 立即触发」已移除（稳定态下退化为零请求的幂等空跑，
+> 明细改由 23:30 调度 job + 上传时就地补 gz 保障）。但**「脚本不进镜像、发版必须
+> 同步宿主」这条交付规则持续有效** —— 下面这段同步步骤仍然必做。
+
 同步与校验（开发机 → NAS，端口 222，账户 `hs40`）：
 
 ```bash
@@ -291,10 +295,11 @@ ssh -p 222 hs40@192.168.2.2 \
 tr -d '\r' < deploy/nas_deploy_single.sh | \
   ssh -p 222 hs40@192.168.2.2 \
   'cat > /volume1/docker/health-system/nas_deploy_single.sh'
-# 3. 远端校验语法 + 确认新版逻辑已在；再对比本地/远端 sha256sum 是否一致
+# 3. 远端校验语法 + 双端比对 sha256（一致即说明同步完整，不依赖脚本内特定版本字样）
 ssh -p 222 hs40@192.168.2.2 \
   'bash -n /volume1/docker/health-system/nas_deploy_single.sh && \
-   grep -n fit_backfill /volume1/docker/health-system/nas_deploy_single.sh'
+   sha256sum /volume1/docker/health-system/nas_deploy_single.sh'
+sha256sum deploy/nas_deploy_single.sh
 ```
 
 确认无误后再执行：
@@ -317,8 +322,8 @@ v3.4.5 起容器内 `app/services/fit_backfill.py` 自愈：
   `fit_jsonl/<aid>.jsonl.gz` 的活动，按现有 Garmin 凭据下载 `.fit` → 复用镜像内
   `app/parsers/fit.py` 解析 → append-only 写 `fit_jsonl/<aid>.jsonl.gz`；
   只补空、幂等、单条失败不阻断其余。
-- 部署脚本在容器启动、健康检查通过后立即
-  `docker exec hs-app python -m app.services.fit_backfill` 触发一次，无需等到当晚。
+- v3.4.6 起 `tredict_sync` 上传前调 `ensure_fit_jsonl` **就地补**该活动明细，
+  新上传活动当场即有逐组数据，不必等 23:30。
 - 逐条失败写 `data/raw/garmin/_backfill_reports/<date>.json`，汇总进消息中心
   （同日去重）；钉钉只在「整批失败 / Garmin 登录失效 / 连续 3 天仍有缺口」时报。
 - 已授权容器无人值守登录 Garmin 拉取个人健康数据（沿用现有凭据，不新增账号/密钥）；
@@ -640,10 +645,11 @@ health-system/
     解析 → append-only 写 `fit_jsonl/<aid>.jsonl.gz`（只补空、幂等、失败隔离）。
 29. ~~补齐只能等人工搬运或本机 daily~~ →
     `config.fit_backfill_cron`（每日 23:30）注册独立 `fit_backfill` job；
-    部署脚本健康检查后 `docker exec` 立即触发一次 `python -m app.services.fit_backfill`。
-    回归测试：`test_fit_backfill.py` / `test_fit_backfill_job.py` /
-    `test_fit_backfill_deploy.py` 覆盖解析存储、只补空幂等、失败隔离、cron 注册、
-    部署触发在启动之后且不含搬运指令。
+    v3.4.6 起上传前再由 `ensure_fit_jsonl` 就地补一次。（v3.4.5 曾在部署脚本里
+    「5.1 立即触发」，v3.4.8 移除：稳定态下该步只是 `skipped=316 / filled=[]`
+    的零请求幂等空跑。）回归测试：`test_fit_backfill.py` /
+    `test_fit_backfill_job.py` / `test_fit_backfill_deploy.py` 覆盖解析存储、
+    只补空幂等、失败隔离、cron 注册，以及脚本不再要求人工搬运 / 不再触发 5.1。
 30. ~~失败无留痕、告警会刷屏~~ →
     逐条失败写 `data/raw/garmin/_backfill_reports/<date>.json`，汇总进消息中心
     （同日 `ref_id` 去重）；钉钉只在「整批失败 / Garmin 登录失效 / 连续 3 天仍有缺口」

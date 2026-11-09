@@ -1,10 +1,11 @@
-"""部署脚本的逐秒心率补齐接缝（v3.4.5）。
+"""部署脚本的逐秒心率补齐接缝。
 
 Seam: 部署配置文件 —— 读文件内容断言关键约束，不依赖运行时环境。
 风格对齐 ``test_deploy_config.py``。
 
-v3.4.4 的自检只告警「请把本机 fit_jsonl 同步到 NAS」。v3.4.5 起容器自足，
-部署脚本必须在启动容器后触发一次立即补齐，且不再要求人工搬运。
+v3.4.4 的自检只告警「请把本机 fit_jsonl 同步到 NAS」；v3.4.5 起容器自足，
+曾在部署后触发一次立即补齐（5.1）。v3.4.8 起移除 5.1：稳定态下明细已由
+23:30 调度 job + v3.4.6 上传时就地补 gz 保障，5.1 退化为零请求的幂等空跑。
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ def _read(path: Path) -> str:
 
 
 class TestFitBackfillTrigger:
-    """v3.4.5：容器启动后必须触发一次立即补齐。"""
+    """v3.4.8：部署脚本不再触发立即补齐（由 23:30 job 与上传时就地补 gz 承担）。"""
 
     @staticmethod
     def _code_lines() -> list[str]:
@@ -31,13 +32,13 @@ class TestFitBackfillTrigger:
             if ln.strip() and not ln.lstrip().startswith("#")
         ]
 
-    def test_script_triggers_backfill_after_container_is_up(self) -> None:
+    def test_script_no_longer_triggers_backfill_on_deploy(self) -> None:
         code = "\n".join(self._code_lines())
-        up_at = code.find("up -d")
-        trigger_at = code.find("app.services.fit_backfill")
-        assert up_at != -1, "找不到容器启动指令"
-        assert trigger_at != -1, "部署脚本未触发容器内的逐秒心率补齐"
-        assert up_at < trigger_at, "补齐必须在容器启动之后"
+        assert "up -d" in code, "找不到容器启动指令"
+        assert "app.services.fit_backfill" not in code, (
+            "部署脚本仍在触发 5.1 立即补齐 —— v3.4.8 起该步已移除"
+        )
+        assert "5.1 触发" not in code, "5.1 日志文案仍残留"
 
     def test_script_no_longer_asks_for_manual_fit_copy(self) -> None:
         code = "\n".join(self._code_lines())

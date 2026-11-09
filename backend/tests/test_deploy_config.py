@@ -504,6 +504,9 @@ class TestHostDeployScriptSyncDoc:
     v3.4.5 的 5.1 立即补齐逻辑写进了仓库脚本，但脚本不进镜像、CI 不推送；
     NAS 宿主仍是旧版，导致两图升级后未恢复。文档须明确这一交付步骤，
     否则下次发版仍会只换 HS_TAG 而漏同步脚本。
+
+    注：5.1 已于 v3.4.8 移除，但「脚本不进镜像、发版须同步宿主」这条规则
+    持续有效，本测试锁的是文档里的这条规则本身。
     """
 
     def test_readme_states_script_is_not_in_image(self):

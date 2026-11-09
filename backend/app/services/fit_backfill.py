@@ -365,10 +365,11 @@ __all__ = [
 
 
 def main() -> None:
-    """CLI 入口：``python -m app.services.fit_backfill``。
+    """CLI 入口：``python -m app.services.fit_backfill``（运维手动补齐用）。
 
-    部署脚本在容器启动后调用，立即补齐一次，不必等到当晚 23:30 的调度任务。
-    结果以 JSON 打到 stdout 便于部署日志核对；异常不阻断部署（脚本兜底）。
+    常驻补齐由 scheduler 的 23:30 ``fit_backfill`` job 承担；v3.4.6 起上传前还会
+    由 ``ensure_fit_jsonl`` 就地补该活动明细。v3.4.8 起部署脚本不再调用本入口
+    （5.1 移除）。结果以 JSON 打到 stdout 便于人工核对。
     """
     import json
 
